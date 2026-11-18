@@ -1,0 +1,9 @@
+{
+  "title": "Peso e baricentro",
+  "description": "Peso totale e baricentro degli elementi o assiemi selezionati nel modello 3D.",
+  "icon": "https://TUO-INDIRIZZO/icon.png",
+  "url": "https://TUO-INDIRIZZO/index.html",
+  "infoUrl": "https://TUO-INDIRIZZO/LEGGIMI.txt",
+  "enabled": true,
+  "extensionType": ["3dviewer"]
+}

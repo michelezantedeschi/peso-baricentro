@@ -1,0 +1,44 @@
+PESO E BARICENTRO – estensione per Trimble Connect (visualizzatore 3D)
+=====================================================================
+
+COSA FA
+Seleziona nel visualizzatore 3D uno o più elementi (pezzi o assiemi Tekla):
+il pannello mostra subito
+  - peso totale (dalla proprietà "Tekla Quantity · Weight" o simili;
+    se manca: volume × densità impostabile, default 7850 kg/m³)
+  - baricentro X, Y, Z in metri, nelle coordinate del visualizzatore
+  - ingombro in pianta e quote minima/massima
+  - elenco dei pezzi con peso e posizione
+Pulsanti: "Mostra COG nel modello" (mette un segno nel 3D),
+"Copia risultati" (tabella da incollare in Excel).
+
+COME CALCOLA IL BARICENTRO
+Media dei centri dei pezzi, pesata sul peso di ciascun pezzo. Gli assiemi
+vengono scomposti nei loro pezzi (opzione nelle Impostazioni).
+Verifica sul modello MET-047: sui conci di trave T01–T63 lo scarto dal
+baricentro reale è al massimo 1 cm; sui diaframmi con lamiere molto
+oblique (D01–D08) arriva a qualche decimetro.
+I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati
+(su un concio di trave pesano circa il 2%).
+
+INSTALLAZIONE (una volta sola)
+1. Pubblica questi file su un indirizzo web HTTPS pubblico che consenta
+   CORS. Il modo più semplice è GitHub Pages:
+   a. su github.com crea un repository pubblico, es. "peso-baricentro";
+   b. carica tutti i file di questa cartella (Add file > Upload files);
+   c. Settings > Pages > Branch "main", cartella "/ (root)" > Save;
+   d. dopo un minuto l'indirizzo è https://TUOUTENTE.github.io/peso-baricentro/
+2. Apri manifest.json e sostituisci le tre occorrenze di
+   "https://TUO-INDIRIZZO" con quell'indirizzo (senza "/" finale),
+   poi ricarica il file.
+3. In Trimble Connect per browser: apri il progetto > Impostazioni >
+   Estensioni (Apps & capabilities) > Aggiungi estensione personalizzata,
+   e incolla l'URL del manifest, es.
+   https://TUOUTENTE.github.io/peso-baricentro/manifest.json
+4. Apri un modello nel visualizzatore 3D: l'estensione compare nel pannello
+   laterale delle estensioni.
+
+FILE
+index.html   pannello dell'estensione
+tcwapi.js    Trimble Connect Workspace API 0.3.38 (libreria ufficiale)
+manifest.json, icon.png, cog.png

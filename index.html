@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peso e baricentro</title>
+<style>
+:root{--ink:#1d2328;--muted:#5f6a72;--line:#d9dddb;--bg:#fff;--soft:#f4f5f3;--accent:#0063a3;--ok:#2e7d4f;--warn:#b36b00;--ko:#c0392b;
+  --f:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--m:ui-monospace,"Cascadia Mono",Consolas,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font:13px/1.45 var(--f);color:var(--ink);background:var(--bg);padding:12px;display:flex;flex-direction:column;gap:10px}
+h1{font-size:15px;margin:0;font-weight:600}
+.muted{color:var(--muted)}
+.box{border:1px solid var(--line);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.big{font:600 24px/1.1 var(--f);font-variant-numeric:tabular-nums}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px}
+.kv span:nth-child(odd){color:var(--muted)}
+.kv span:nth-child(even){font-family:var(--m);text-align:right;font-variant-numeric:tabular-nums}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+button{font:500 12px var(--f);padding:6px 10px;border:1px solid var(--accent);background:#fff;color:var(--accent);border-radius:4px;cursor:pointer}
+button.pri{background:var(--accent);color:#fff}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input[type=number]{width:80px;font:12px var(--m);padding:3px 5px;border:1px solid var(--line);border-radius:4px}
+.note{font-size:11.5px;color:var(--muted)}
+.warn{color:var(--warn)} .ko{color:var(--ko)}
+table{border-collapse:collapse;width:100%;font-size:11.5px}
+th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:3px 4px;position:sticky;top:0;background:#fff}
+td{padding:2px 4px;border-bottom:1px solid #eef0ef;font-family:var(--m);font-variant-numeric:tabular-nums;white-space:nowrap}
+td:first-child{font-family:var(--f);max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.tw{max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:4px}
+#state{font-size:12px}
+.spin{display:inline-block;width:10px;height:10px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s 0.8s linear infinite;vertical-align:-1px;margin-right:4px}
+@keyframes s{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+</style>
+</head>
+<body>
+<h1>Peso e baricentro</h1>
+<div id="state" class="muted">Connessione a Trimble Connect…</div>
+
+<div class="box" id="res" hidden>
+  <div class="row" style="justify-content:space-between;align-items:baseline">
+    <div><div class="muted">Peso totale</div><div class="big" id="w">–</div></div>
+    <div style="text-align:right"><div class="muted">Elementi</div><div class="big" id="n" style="font-size:18px">–</div></div>
+  </div>
+  <div class="kv">
+    <span>COG X</span><span id="cx">–</span>
+    <span>COG Y</span><span id="cy">–</span>
+    <span>COG Z</span><span id="cz">–</span>
+    <span>Ingombro X × Y</span><span id="dxy">–</span>
+    <span>Altezza (Z min / max)</span><span id="dz">–</span>
+  </div>
+  <div id="src" class="note"></div>
+  <div class="row">
+    <button class="pri" id="mark">Mostra COG nel modello</button>
+    <button id="unmark">Togli segno</button>
+    <button id="copy">Copia risultati</button>
+  </div>
+</div>
+
+<details class="box" id="detBox" hidden>
+  <summary>Dettaglio elementi (<span id="nd">0</span>)</summary>
+  <div class="tw"><table id="tab"></table></div>
+</details>
+
+<details class="box">
+  <summary>Impostazioni</summary>
+  <label class="row"><input type="checkbox" id="expand" checked> Scomponi gli assiemi nei loro pezzi</label>
+  <label class="row">Densità per elementi senza peso <input type="number" id="rho" value="7850" step="10"> kg/m³</label>
+  <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"). Se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con pezzi prismatici (travi, lamiere, piatti) l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. Le coordinate sono quelle del visualizzatore di Trimble Connect, in metri. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati.</div>
+</details>
+
+<script src="tcwapi.js"></script>
+<script>
+(async function () {
+  const $ = s => document.querySelector(s);
+  const WS = window.TrimbleConnectWorkspace || window.WorkspaceAPI;
+  const nf = (v, d) => v.toLocaleString('it-IT', {minimumFractionDigits: d, maximumFractionDigits: d});
+  const setState = (t, busy) => { $('#state').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
+  let api, last = null, iconOn = false, runId = 0, timer = null;
+
+  try {
+    api = await WS.connect(window.parent, (event, args) => {
+      if (event === 'viewer.onSelectionChanged') { clearTimeout(timer); timer = setTimeout(update, 250); }
+    }, 30000);
+  } catch (e) {
+    setState('<span class="ko">Impossibile collegarsi a Trimble Connect. Apri questa estensione dal visualizzatore 3D di un progetto.</span>');
+    return;
+  }
+
+  // ---- lettura proprietà
+  const allProps = o => (o.properties || []).flatMap(ps => (ps.properties || []).map(p => ({set: ps.name || '', name: p.name, value: p.value, type: p.type})));
+  const num = v => { const x = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : null; };
+  function weightOf(o) {
+    const P = allProps(o);
+    const pick = (fn) => { const p = P.find(fn); return p ? num(p.value) : null; };
+    let w = pick(p => /tekla quantity/i.test(p.set) && /^weight$/i.test(p.name));
+    if (w != null && w > 0) return {w, how: 'prop'};
+    w = pick(p => /^(net ?weight|weight|peso|mass|gross ?weight)$/i.test(p.name));
+    if (w != null && w > 0) return {w, how: 'prop'};
+    w = pick(p => /cast unit weight|assembly weight/i.test(p.name));
+    if (w != null && w > 0) return {w, how: 'prop'};
+    const v = pick(p => /^(volume|net ?volume|gross ?volume)$/i.test(p.name));
+    if (v != null && v > 0) return {w: v * +$('#rho').value, how: 'vol'};
+    const bolt = P.some(p => /tekla bolt/i.test(p.set));
+    return {w: 0, how: bolt ? 'bolt' : 'none'};
+  }
+  function labelOf(o) {
+    const P = allProps(o);
+    const f = re => { const p = P.find(p => re.test(p.name) && p.value !== '' && p.value != null); return p ? String(p.value) : null; };
+    const asm = f(/^(assembly_pos|assembly\/cast unit mark)$/i), part = f(/^part_pos$/i);
+    const name = (o.product && o.product.name) || o.class || ('#' + o.id);
+    return [asm, part && part !== asm ? part : null].filter(Boolean).join(' / ') || name;
+  }
+  const isAssembly = o => /elementassembly/i.test(o.class || '');
+  const chunk = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
+
+  async function leafIds(modelId, ids) {
+    if (!$('#expand').checked) return ids;
+    const props = [];
+    for (const c of chunk(ids, 400)) props.push(...await api.viewer.getObjectProperties(modelId, c));
+    const asm = props.filter(isAssembly).map(o => o.id);
+    const out = new Set(props.filter(o => !isAssembly(o)).map(o => o.id));
+    if (asm.length) {
+      try {
+        const kids = await api.viewer.getHierarchyChildren(modelId, asm, 4 /* ElementAssembly */, true);
+        if (kids && kids.length) kids.forEach(k => out.add(k.id)); else asm.forEach(i => out.add(i));
+      } catch (e) { asm.forEach(i => out.add(i)); }
+    }
+    return [...out];
+  }
+
+  async function update() {
+    const my = ++runId;
+    let sel;
+    try { sel = await api.viewer.getSelection(); } catch (e) { setState('<span class="ko">Errore nel leggere la selezione: ' + e + '</span>'); return; }
+    sel = (sel || []).filter(s => s.objectRuntimeIds && s.objectRuntimeIds.length);
+    if (!sel.length) { last = null; $('#res').hidden = true; $('#detBox').hidden = true; setState('Seleziona uno o più elementi nel modello.'); return; }
+    setState('Calcolo in corso…', true);
+    const rows = [];
+    try {
+      for (const s of sel) {
+        const ids = await leafIds(s.modelId, s.objectRuntimeIds);
+        for (const c of chunk(ids, 400)) {
+          const [props, boxes] = await Promise.all([api.viewer.getObjectProperties(s.modelId, c), api.viewer.getObjectBoundingBoxes(s.modelId, c)]);
+          const bb = new Map(boxes.map(b => [b.id, b.boundingBox]));
+          for (const o of props) {
+            const b = bb.get(o.id); if (!b) continue;
+            const {w, how} = weightOf(o);
+            rows.push({id: o.id, model: s.modelId, label: labelOf(o), cls: o.class, w, how,
+              c: [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2], min: b.min, max: b.max});
+          }
+          if (my !== runId) return;
+        }
+      }
+    } catch (e) { setState('<span class="ko">Errore durante il calcolo: ' + (e && e.message || e) + '</span>'); return; }
+    if (my !== runId) return;
+    show(rows);
+  }
+
+  function show(rows) {
+    const W = rows.reduce((a, r) => a + r.w, 0);
+    let cog = null;
+    if (W > 0) cog = [0, 1, 2].map(k => rows.reduce((a, r) => a + r.w * r.c[k], 0) / W);
+    const mn = {x: Math.min(...rows.map(r => r.min.x)), y: Math.min(...rows.map(r => r.min.y)), z: Math.min(...rows.map(r => r.min.z))};
+    const mx = {x: Math.max(...rows.map(r => r.max.x)), y: Math.max(...rows.map(r => r.max.y)), z: Math.max(...rows.map(r => r.max.z))};
+    last = {rows, W, cog, mn, mx};
+    $('#res').hidden = false; $('#detBox').hidden = false;
+    $('#w').textContent = W >= 1000 ? nf(W / 1000, 2) + ' t' : nf(W, 1) + ' kg';
+    $('#n').textContent = rows.length;
+    $('#cx').textContent = cog ? nf(cog[0], 3) + ' m' : '–';
+    $('#cy').textContent = cog ? nf(cog[1], 3) + ' m' : '–';
+    $('#cz').textContent = cog ? nf(cog[2], 3) + ' m' : '–';
+    $('#dxy').textContent = nf(mx.x - mn.x, 2) + ' × ' + nf(mx.y - mn.y, 2) + ' m';
+    $('#dz').textContent = nf(mn.z, 2) + ' / ' + nf(mx.z, 2) + ' m';
+    const nv = rows.filter(r => r.how === 'vol').length, nb = rows.filter(r => r.how === 'bolt').length, nn = rows.filter(r => r.how === 'none').length;
+    const msg = [];
+    if (nv) msg.push(`<span class="warn">${nv} elementi pesati da volume × densità</span>`);
+    if (nb) msg.push(`${nb} bulloni non conteggiati`);
+    if (nn) msg.push(`<span class="warn">${nn} elementi senza peso né volume</span>`);
+    $('#src').innerHTML = msg.join(' · ') || 'Tutti i pesi letti dalle proprietà del modello.';
+    $('#nd').textContent = rows.length;
+    const sorted = rows.slice().sort((a, b) => b.w - a.w).slice(0, 500);
+    $('#tab').innerHTML = '<tr><th>Elemento</th><th>kg</th><th>X</th><th>Y</th><th>Z</th></tr>' +
+      sorted.map(r => `<tr title="${(r.cls || '').replace(/"/g, '')}"><td>${r.label}</td><td>${r.how === 'bolt' || r.how === 'none' ? '–' : nf(r.w, 1)}</td><td>${nf(r.c[0], 2)}</td><td>${nf(r.c[1], 2)}</td><td>${nf(r.c[2], 2)}</td></tr>`).join('') +
+      (rows.length > 500 ? `<tr><td colspan="5" class="muted">… altri ${rows.length - 500} elementi</td></tr>` : '');
+    setState(`Selezione: ${rows.length} elementi.`);
+    if (iconOn) mark();
+  }
+
+  async function mark() {
+    if (!last || !last.cog) return;
+    const p = {x: last.cog[0], y: last.cog[1], z: last.cog[2]};
+    try {
+      await api.viewer.removeIcon({id: 9471, iconPath: '', position: p, size: 0}).catch(() => {});
+      await api.viewer.addIcon({id: 9471, iconPath: new URL('cog.png', location.href).href, position: p, size: 32});
+      iconOn = true;
+    } catch (e) { setState('<span class="warn">Il visualizzatore non ha accettato il segno: ' + (e && e.message || e) + '</span>'); }
+  }
+  $('#mark').onclick = mark;
+  $('#unmark').onclick = async () => { iconOn = false; try { await api.viewer.removeIcon(); } catch (e) {} };
+  $('#copy').onclick = async () => {
+    if (!last) return;
+    const d = (v, k) => v.toFixed(k).replace('.', ',');
+    const L = [['Peso totale (kg)', d(last.W, 1)], ['COG X (m)', last.cog ? d(last.cog[0], 3) : ''], ['COG Y (m)', last.cog ? d(last.cog[1], 3) : ''], ['COG Z (m)', last.cog ? d(last.cog[2], 3) : ''], [], ['Elemento', 'Peso kg', 'X', 'Y', 'Z']];
+    last.rows.forEach(r => L.push([r.label, d(r.w, 1), d(r.c[0], 3), d(r.c[1], 3), d(r.c[2], 3)]));
+    const txt = L.map(r => r.join('\t')).join('\n');
+    try { await navigator.clipboard.writeText(txt); setState('Risultati copiati: incollali in Excel.'); }
+    catch (e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); setState('Risultati copiati: incollali in Excel.'); }
+  };
+  $('#expand').onchange = update; $('#rho').onchange = update;
+  update();
+})();
+</script>
+</body>
+</html>
