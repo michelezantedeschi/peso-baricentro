@@ -54,6 +54,13 @@ chiede di sceglierlo dal computer e lo legge solo nel browser.
 Il DXF è in millimetri reali per le viste 2D: in AutoCAD si apre e si
 salva come DWG.
 
+CONDIVISIONE (versione 4)
+Gruppi e baricentri sono salvati nel progetto Trimble Connect, nel file
+PesoBaricentro/baricentri.json (cartella creata automaticamente): tutti i
+membri del progetto vedono gli stessi baricentri e le stesse origini.
+Le modifiche di più colleghi vengono unite; l'estensione si aggiorna ogni
+45 secondi e a ogni modifica. Non cancellare né spostare quel file.
+
 FILE
 index.html   pannello dell'estensione
 draw.js      lettura IFC, viste, PDF e DXF

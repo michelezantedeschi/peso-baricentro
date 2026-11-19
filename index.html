@@ -68,6 +68,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
 
 <section class="box">
   <div class="row"><h2 class="grow">Gruppo di baricentri</h2><button class="sm" id="gNew">+ Nuovo gruppo</button></div>
+  <div id="sync" class="note">Condivisione con il progetto…</div>
   <div class="row"><span class="sw" id="gSw"></span><select id="gSel" class="grow" aria-label="Gruppo attivo"></select></div>
   <div class="row"><input id="gName" class="grow" aria-label="Nome del gruppo"><button class="sm x" id="gDel">Elimina gruppo</button></div>
   <details id="oBox">
@@ -149,8 +150,24 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   const KEY = 'peso-baricentro:' + projKey;
   const newGroup = (name, i) => ({id: Date.now() + Math.floor(Math.random() * 1000), name, color: i % PAL.length, origin: {x: 0, y: 0, z: 0}, rot: 0, cogs: []});
   try { store = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
-  if (!store || !store.groups || !store.groups.length) store = {groups: [newGroup('Gruppo 1', 0)], active: 0, nextIcon: 1000};
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} };
+  if (!store || !store.groups || !store.groups.length) store = {groups: [newGroup('Gruppo 1', 0)], active: 0, nextIcon: 1000, pristine: true};
+  store.deleted ||= {g: [], c: []};
+  // marca temporale delle modifiche: serve a unire le modifiche di più colleghi
+  let sigs = new Map();
+  const gSig = g => JSON.stringify([g.name, g.color, g.origin, g.rot]);
+  function resetSigs() { sigs = new Map(); store.groups.forEach(g => { sigs.set('g' + g.id, gSig(g)); g.cogs.forEach(c => sigs.set('c' + c.id, c.name)); }); }
+  function stampChanges() {
+    const now = Date.now(); let ch = false;
+    store.groups.forEach(g => { const sg = gSig(g); if (sigs.get('g' + g.id) !== sg) { g.t = now; sigs.set('g' + g.id, sg); ch = true; }
+      g.cogs.forEach(c => { if (sigs.get('c' + c.id) !== c.name) { c.t = now; sigs.set('c' + c.id, c.name); ch = true; } }); });
+    if (ch) store.pristine = false;
+    return ch;
+  }
+  resetSigs();
+  const saveLocal = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} };
+  const save = () => { const ch = stampChanges(); saveLocal(); if (ch || store.dirty) { store.dirty = false; scheduleSync(); } };
+  const markDeleted = (kind, id) => { store.deleted[kind].push(id); store.pristine = false; store.dirty = true; };
+  const newId = () => 1000000 + Math.floor(Math.random() * 2000000000);
   const G = () => store.groups[Math.min(store.active, store.groups.length - 1)];
 
   // ---------------- coordinate relative al gruppo
@@ -227,13 +244,15 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   // ---------------- salvataggio baricentri
   $('#save').onclick = async () => {
     if (!cur || !cur.cog) return; const g = G();
-    const c = {id: store.nextIcon++, name: $('#newName').value.trim() || `COG ${g.cogs.length + 1}`, W: cur.W, cog: cur.cog, n: cur.n, mn: cur.mn, mx: cur.mx, src: cur.src, leaves: cur.leaves, marks: cur.marks};
+    const c = {id: newId(), name: $('#newName').value.trim() || `COG ${g.cogs.length + 1}`, W: cur.W, cog: cur.cog, n: cur.n, mn: cur.mn, mx: cur.mx, src: cur.src, leaves: cur.leaves, marks: cur.marks};
     // GUID IFC dei pezzi e pesi: servono per le tavole anche dopo aver ricaricato il modello
     try {
       c.parts = [];
       const byModel = {}; cur.wts.forEach(([m, id, w, how]) => (byModel[m] ||= []).push([id, w, how]));
       for (const m in byModel) { const ids = byModel[m].map(x => x[0]); const guids = await api.viewer.convertToObjectIds(m, ids);
         byModel[m].forEach((x, i) => c.parts.push({m, g: guids[i], w: x[1], how: x[2]})); }
+      c.srcG = [];
+      for (const sv of cur.src) c.srcG.push({m: sv.modelId, g: await api.viewer.convertToObjectIds(sv.modelId, sv.ids)});
     } catch (e) { c.parts = null; }
     g.cogs.push(c); $('#newName').value = ''; save(); await drawIcons(); render();
     setState(`Salvato "${esc(c.name)}" nel gruppo "${esc(g.name)}".`);
@@ -249,27 +268,44 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     if (!showIcons) return;
     const icons = [];
     store.groups.forEach(g => g.cogs.forEach(c => icons.push({id: c.id, iconPath: iconUrl(g), position: {x: c.cog[0], y: c.cog[1], z: c.cog[2]}, size: 30})));
+    try { localStorage.setItem(KEY + ':icons', JSON.stringify(icons.map(i => i.id))); } catch (e) {}
     if (icons.length) { try { await api.viewer.addIcon(icons); drawn = icons; } catch (e) { setState('<span class="warn">Il visualizzatore non ha accettato i segni: ' + esc(e && e.message || e) + '</span>'); } }
   }
   // all'avvio toglie anche i segni rimasti da sessioni precedenti
   async function purgeStale() {
-    const stale = []; for (let id = 1000; id < (store.nextIcon || 1000) + 5; id++) stale.push({id, iconPath: '', position: {x: 0, y: 0, z: 0}, size: 0});
+    let ids = []; try { ids = JSON.parse(localStorage.getItem(KEY + ':icons')) || []; } catch (e) {}
+    for (let id = 1000; id < (store.nextIcon || 1000) + 5; id++) ids.push(id);
+    store.groups.forEach(g => g.cogs.forEach(c => ids.push(c.id)));
+    const stale = [...new Set(ids)].map(id => ({id, iconPath: '', position: {x: 0, y: 0, z: 0}, size: 0}));
     await removeIcons(stale);
   }
 
   // ---------------- evidenziazione
   const selector = list => ({modelObjectIds: list.map(s => ({modelId: s.modelId, objectRuntimeIds: s.ids}))});
+  const rtCache = new Map();
+  async function rtList(pairs) { // [{m, g:[guid]}] -> [{modelId, ids}]
+    const out = [];
+    for (const p of pairs) { const k = p.m + '|' + p.g.join(','); let ids = rtCache.get(k);
+      if (!ids) { ids = (await api.viewer.convertToObjectRuntimeIds(p.m, p.g)).filter(x => x != null); rtCache.set(k, ids); }
+      out.push({modelId: p.m, ids}); }
+    return out;
+  }
+  async function leafSel(c) {
+    if (c.parts && c.parts.length) { try { const by = {}; c.parts.forEach(p => (by[p.m] ||= []).push(p.g)); return await rtList(Object.entries(by).map(([m, g]) => ({m, g}))); } catch (e) {} }
+    return c.leaves;
+  }
+  async function srcSel(c) { if (c.srcG && c.srcG.length) { try { return await rtList(c.srcG); } catch (e) {} } return c.src; }
   async function clearHighlight() {
     try { await api.viewer.setObjectState(undefined, {color: 'reset'}); } catch (e) {}
     hlCog = null;
   }
   async function highlight(cogs, color) {
     await clearHighlight();
-    for (const c of cogs) { try { await api.viewer.setObjectState(selector(c.leaves), {color: PAL[color]}); } catch (e) {} }
+    for (const c of cogs) { try { await api.viewer.setObjectState(selector(await leafSel(c)), {color: PAL[color]}); } catch (e) {} }
   }
   async function focusCog(c, g) {
     await highlight([c], g.color); hlCog = c.id; $('#showAll').setAttribute('aria-pressed', 'false');
-    try { await api.viewer.setSelection(selector(c.src), 'set'); } catch (e) {}
+    try { await api.viewer.setSelection(selector(await srcSel(c)), 'set'); } catch (e) {}
     render();
     const el = document.querySelector(`[data-c="${c.id}"]`); if (el) el.scrollIntoView({block: 'nearest'});
   }
@@ -313,6 +349,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   $('#gName').onchange = e => { G().name = e.target.value || G().name; save(); render(); };
   $('#gDel').onclick = async () => {
     const g = G(); if (!confirmInline($('#gDel'), `Elimina "${g.name}" e i suoi ${g.cogs.length} baricentri?`)) return;
+    markDeleted('g', g.id); g.cogs.forEach(c => markDeleted('c', c.id));
     store.groups.splice(store.active, 1); if (!store.groups.length) store.groups.push(newGroup('Gruppo 1', 0)); store.active = 0;
     save(); await clearHighlight(); await drawIcons(); render(); renderCur();
   };
@@ -343,7 +380,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     $('#cogList').querySelectorAll('[data-dxf]').forEach(el => el.onclick = () => exportCogs([g.cogs.find(x => x.id === +el.dataset.dxf)], g, 'dxf'));
     $('#cogList').querySelectorAll('[data-del]').forEach(el => el.onclick = async () => {
       if (!confirmInline(el, 'Elimina questo baricentro?')) return;
-      const i = g.cogs.findIndex(x => x.id === +el.dataset.del); const c = g.cogs[i]; g.cogs.splice(i, 1);
+      const i = g.cogs.findIndex(x => x.id === +el.dataset.del); const c = g.cogs[i]; g.cogs.splice(i, 1); markDeleted('c', c.id);
       if (hlCog === c.id) await clearHighlight(); save(); await drawIcons(); render(); setState(`Baricentro "${esc(c.name)}" eliminato.`);
     });
     const W = g.cogs.reduce((a, c) => a + c.W, 0);
@@ -358,6 +395,108 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     try { await navigator.clipboard.writeText(txt); } catch (e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
     setState('Tabella del gruppo copiata: incollala in Excel.');
   };
+  // ================= condivisione nel progetto Trimble Connect =================
+  const SHARED_DIR = 'PesoBaricentro', SHARED_FILE = 'baricentri.json';
+  const SH = {host: null, folderId: null, fileId: null, ver: null, last: null, busy: false, again: false, timer: null, tok: null};
+  const syncMsg = t => { $('#sync').innerHTML = t; };
+  async function tcFetch(path, opts = {}, retry = true) {
+    if (!SH.tok) SH.tok = await getToken();
+    let proj = {}; try { proj = await api.project.getProject(); } catch (e) {}
+    const loc = String(proj.location || '').toLowerCase().replace(/[^a-z]/g, '');
+    const hosts = SH.host ? [SH.host] : [HOSTS[loc], ...Object.values(HOSTS)].filter((h, i, a) => h && a.indexOf(h) === i);
+    let last;
+    for (const h of hosts) {
+      let r;
+      try { r = await fetch(h + '/tc/api/2.0' + path, {...opts, headers: {Authorization: 'Bearer ' + SH.tok, ...(opts.headers || {})}}); }
+      catch (e) { last = new Error('rete o permessi del browser (' + (e.message || e) + ')'); continue; }
+      if (r.ok) { SH.host = h; return r; }
+      if (r.status === 401 && retry) { SH.tok = null; return tcFetch(path, opts, false); }
+      last = new Error(`HTTP ${r.status} su ${path.split('?')[0]}`);
+      if (SH.host) break;
+    }
+    throw last;
+  }
+  const isType = (i, t) => String(i.type || '').toUpperCase() === t;
+  async function sharedLocate() {
+    if (SH.folderId) return;
+    const p = await (await tcFetch(`/projects/${encodeURIComponent(projKey)}`)).json();
+    const root = p.rootId || p.rootFolderId; if (!root) throw new Error('cartella principale del progetto non trovata');
+    const items = await (await tcFetch(`/folders/${root}/items`)).json();
+    let f = (items || []).find(i => isType(i, 'FOLDER') && i.name === SHARED_DIR);
+    if (!f) f = await (await tcFetch('/folders', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: SHARED_DIR, parentId: root})})).json();
+    SH.folderId = f.id;
+  }
+  async function sharedRemote() {
+    const items = await (await tcFetch(`/folders/${SH.folderId}/items`)).json();
+    const it = (items || []).find(i => isType(i, 'FILE') && i.name === SHARED_FILE);
+    if (!it) return null;
+    SH.fileId = it.id;
+    if (it.versionId && it.versionId === SH.ver && SH.last) return {ver: it.versionId, data: SH.last, same: true};
+    const j = await (await tcFetch(`/files/fs/${it.id}/downloadurl`)).json();
+    const url = typeof j === 'string' ? j : (j.url || j.downloadUrl || j.downloadURL);
+    const d = await fetch(url); if (!d.ok) throw new Error('lettura del file condiviso: HTTP ' + d.status);
+    return {ver: it.versionId, data: await d.json()};
+  }
+  const docOf = () => ({format: 'peso-baricentro', v: 1, saved: new Date().toISOString(), groups: store.groups, deleted: store.deleted});
+  const norm = d => JSON.stringify({g: (d.groups || []).map(g => ({...g, cogs: g.cogs.slice().sort((a, b) => a.id - b.id)})).sort((a, b) => a.id - b.id), d: {g: [...(d.deleted || {}).g || []].sort(), c: [...(d.deleted || {}).c || []].sort()}});
+  async function sharedUpload() {
+    const doc = docOf(), blob = new Blob([JSON.stringify(doc)], {type: 'application/json'});
+    let last;
+    for (const q of [`?parentId=${SH.folderId}&parentType=FOLDER`, `?parentId=${SH.folderId}`]) {
+      const fd = new FormData(); fd.append('file', blob, SHARED_FILE);
+      try { const r = await tcFetch('/files' + q, {method: 'POST', body: fd}); const j = await r.json().catch(() => ({}));
+        SH.fileId = j.id || SH.fileId; SH.ver = j.versionId || null; SH.last = JSON.parse(JSON.stringify(doc)); return; }
+      catch (e) { last = e; }
+    }
+    throw last;
+  }
+  const clone = o => JSON.parse(JSON.stringify(o));
+  function merge(rd) {
+    if (!rd || !Array.isArray(rd.groups)) return false;
+    const before = norm(store);
+    if (store.pristine) { // primo avvio di questo collega: prende il file del progetto così com'è
+      store.groups = clone(rd.groups); store.deleted = clone(rd.deleted || {g: [], c: []}); store.pristine = false;
+    } else {
+      const rdel = rd.deleted || {}; const del = {g: [...new Set([...store.deleted.g, ...(rdel.g || [])])], c: [...new Set([...store.deleted.c, ...(rdel.c || [])])]};
+      const map = new Map(store.groups.map(g => [g.id, g]));
+      for (const rg of rd.groups) {
+        const lg = map.get(rg.id);
+        if (!lg) { map.set(rg.id, clone(rg)); continue; }
+        if ((rg.t || 0) > (lg.t || 0)) Object.assign(lg, {name: rg.name, color: rg.color, origin: clone(rg.origin), rot: rg.rot, t: rg.t});
+        const cm = new Map(lg.cogs.map(c => [c.id, c]));
+        for (const rc of rg.cogs) { const lc = cm.get(rc.id); if (!lc) lg.cogs.push(clone(rc)); else if ((rc.t || 0) > (lc.t || 0)) Object.assign(lc, {name: rc.name, t: rc.t}); }
+      }
+      store.groups = [...map.values()].filter(g => !del.g.includes(g.id));
+      store.groups.forEach(g => { g.cogs = g.cogs.filter(c => !del.c.includes(c.id)); });
+      store.deleted = del;
+    }
+    if (!store.groups.length) store.groups.push(newGroup('Gruppo 1', 0));
+    store.active = Math.max(0, Math.min(store.active || 0, store.groups.length - 1));
+    resetSigs();
+    return norm(store) !== before;
+  }
+  function scheduleSync() { clearTimeout(SH.timer); SH.timer = setTimeout(sync, 1200); }
+  async function sync() {
+    if (SH.busy) { SH.again = true; return; }
+    SH.busy = true;
+    try {
+      syncMsg('<span class="spin"></span>Sincronizzazione con il progetto…');
+      await sharedLocate();
+      const r = await sharedRemote();
+      let changed = false;
+      if (r) { if (!r.same) { changed = merge(r.data); SH.ver = r.ver; SH.last = r.data; } }
+      if (!r || norm(store) !== norm(r.data)) await sharedUpload();
+      if (changed) { saveLocal(); await drawIcons(); render(); renderCur(); }
+      syncMsg(`Condiviso nel progetto (${SHARED_DIR}/${SHARED_FILE}) · aggiornato alle ${new Date().toLocaleTimeString('it-IT', {hour: '2-digit', minute: '2-digit'})}`);
+    } catch (e) {
+      syncMsg(`<span class="warn">Non condiviso: ${esc(e && e.message || e)}. I baricentri restano salvati in questo browser.</span> <button class="sm" id="syncRetry">Riprova</button>`);
+      const b = $('#syncRetry'); if (b) b.onclick = () => sync();
+    } finally {
+      SH.busy = false;
+      if (SH.again) { SH.again = false; scheduleSync(); }
+    }
+  }
+
   // ================= esportazione tavole (PDF / DXF) =================
   const WEBIFC_URL = 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/';
   const ifcCache = {};
@@ -370,7 +509,8 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     const t = await api.extension.requestPermission('accesstoken');
     if (t === 'denied') throw new Error('permesso di accesso negato');
     if (t && t !== 'pending' && t.length > 20) return t;
-    expMsg('Trimble Connect chiede il permesso di accesso per l\'estensione: accettalo per scaricare il modello.', true);
+    const m = 'Trimble Connect chiede il permesso di accesso per l\'estensione: accettalo per condividere i baricentri nel progetto e scaricare il modello per le tavole.';
+    if ($('#exp').hidden) syncMsg('<span class="spin"></span>' + m); else expMsg(m, true);
     return await new Promise((res, rej) => { tokenWaiter = v => { tokenWaiter = null; res(v); }; setTimeout(() => rej(new Error('nessuna risposta alla richiesta di accesso')), 120000); });
   }
   const HOSTS = {europe: 'https://app21.connect.trimble.com', northamerica: 'https://app.connect.trimble.com', asia: 'https://app31.connect.trimble.com', australia: 'https://app32.connect.trimble.com'};
@@ -483,6 +623,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   $('#expand').onchange = update; $('#rho').onchange = update;
 
   render(); await purgeStale(); await drawIcons(); update();
+  sync(); setInterval(() => { if (!document.hidden) sync(); }, 45000);
 })();
 </script>
 </body>
