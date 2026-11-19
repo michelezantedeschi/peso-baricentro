@@ -155,11 +155,11 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   // marca temporale delle modifiche: serve a unire le modifiche di più colleghi
   let sigs = new Map();
   const gSig = g => JSON.stringify([g.name, g.color, g.origin, g.rot]);
-  function resetSigs() { sigs = new Map(); store.groups.forEach(g => { sigs.set('g' + g.id, gSig(g)); g.cogs.forEach(c => sigs.set('c' + c.id, c.name)); }); }
+  function resetSigs() { sigs = new Map(); store.groups.forEach(g => { sigs.set('g' + g.id, gSig(g)); g.cogs.forEach(c => sigs.set('c' + c.id, c.name + '|' + (c.ed || 0))); }); }
   function stampChanges() {
     const now = Date.now(); let ch = false;
     store.groups.forEach(g => { const sg = gSig(g); if (sigs.get('g' + g.id) !== sg) { g.t = now; sigs.set('g' + g.id, sg); ch = true; }
-      g.cogs.forEach(c => { if (sigs.get('c' + c.id) !== c.name) { c.t = now; sigs.set('c' + c.id, c.name); ch = true; } }); });
+      g.cogs.forEach(c => { const sc = c.name + '|' + (c.ed || 0); if (sigs.get('c' + c.id) !== sc) { c.t = now; sigs.set('c' + c.id, sc); ch = true; } }); });
     if (ch) store.pristine = false;
     return ch;
   }
@@ -203,10 +203,17 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     const my = ++runId; let sel;
     try { sel = await api.viewer.getSelection(); } catch (e) { setState('<span class="ko">Errore nel leggere la selezione: ' + esc(e) + '</span>'); return; }
     sel = (sel || []).filter(s => s.objectRuntimeIds && s.objectRuntimeIds.length);
-    if (!sel.length) { cur = null; $('#cur').hidden = true; setState('Seleziona uno o più elementi nel modello, poi salva il baricentro nel gruppo.'); return; }
+    if (!sel.length) { cur = null; $('#cur').hidden = true; setState('Seleziona uno o più elementi nel modello, poi salva il baricentro nel gruppo.'); renderEditBtns(); return; }
     setState('Calcolo in corso…', true);
+    let r;
+    try { r = await computeSel(sel, () => my === runId); } catch (e) { setState('<span class="ko">Errore durante il calcolo: ' + esc(e && e.message || e) + '</span>'); return; }
+    if (!r || my !== runId) return;
+    cur = r; renderCur(); renderEditBtns(); setState(`Selezione: ${r.n} elementi.`);
+  }
+  /** peso e baricentro di una selezione [{modelId, objectRuntimeIds}] */
+  async function computeSel(sel, alive = () => true) {
     const rows = [], src = [], leaves = [], marks = new Set();
-    try {
+    {
       for (const s of sel) {
         const ids = await leafIds(s.modelId, s.objectRuntimeIds);
         src.push({modelId: s.modelId, ids: s.objectRuntimeIds.slice()}); leaves.push({modelId: s.modelId, ids});
@@ -216,17 +223,16 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
           for (const o of props) { const b = bb.get(o.id); if (!b) continue; const {w, how} = weightOf(o);
             const mk = markOf(o); if (mk) marks.add(mk);
             rows.push({id: o.id, model: s.modelId, w, how, c: [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2], min: b.min, max: b.max}); }
-          if (my !== runId) return;
+          if (!alive()) return null;
         }
       }
-    } catch (e) { setState('<span class="ko">Errore durante il calcolo: ' + esc(e && e.message || e) + '</span>'); return; }
-    if (my !== runId) return;
+    }
+    if (!alive() || !rows.length) return null;
     const W = rows.reduce((a, r) => a + r.w, 0);
     const cog = W > 0 ? [0, 1, 2].map(k => rows.reduce((a, r) => a + r.w * r.c[k], 0) / W) : null;
     const mn = ['x', 'y', 'z'].map(k => Math.min(...rows.map(r => r.min[k]))), mx = ['x', 'y', 'z'].map(k => Math.max(...rows.map(r => r.max[k])));
-    cur = {W, cog, n: rows.length, src, leaves, mn, mx, marks: [...marks].sort(), wts: rows.map(r => [r.model, r.id, r.w, r.how]),
+    return {W, cog, n: rows.length, src, leaves, mn, mx, marks: [...marks].sort(), wts: rows.map(r => [r.model, r.id, r.w, r.how]),
       nv: rows.filter(r => r.how === 'vol').length, nb: rows.filter(r => r.how === 'bolt').length, nn: rows.filter(r => r.how === 'none').length};
-    renderCur(); setState(`Selezione: ${rows.length} elementi.`);
   }
   function renderCur() {
     if (!cur) return; const g = G();
@@ -244,19 +250,50 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   // ---------------- salvataggio baricentri
   $('#save').onclick = async () => {
     if (!cur || !cur.cog) return; const g = G();
-    const c = {id: newId(), name: $('#newName').value.trim() || `COG ${g.cogs.length + 1}`, W: cur.W, cog: cur.cog, n: cur.n, mn: cur.mn, mx: cur.mx, src: cur.src, leaves: cur.leaves, marks: cur.marks};
-    // GUID IFC dei pezzi e pesi: servono per le tavole anche dopo aver ricaricato il modello
-    try {
-      c.parts = [];
-      const byModel = {}; cur.wts.forEach(([m, id, w, how]) => (byModel[m] ||= []).push([id, w, how]));
-      for (const m in byModel) { const ids = byModel[m].map(x => x[0]); const guids = await api.viewer.convertToObjectIds(m, ids);
-        byModel[m].forEach((x, i) => c.parts.push({m, g: guids[i], w: x[1], how: x[2]})); }
-      c.srcG = [];
-      for (const sv of cur.src) c.srcG.push({m: sv.modelId, g: await api.viewer.convertToObjectIds(sv.modelId, sv.ids)});
-    } catch (e) { c.parts = null; }
+    const c = {id: newId(), name: $('#newName').value.trim() || `COG ${g.cogs.length + 1}`};
+    await fillCog(c, cur);
     g.cogs.push(c); $('#newName').value = ''; save(); await drawIcons(); render();
     setState(`Salvato "${esc(c.name)}" nel gruppo "${esc(g.name)}".`);
   };
+  // copia nel baricentro i risultati di un calcolo, con i GUID IFC dei pezzi (validi per tutti i colleghi e per le tavole)
+  async function fillCog(c, r) {
+    Object.assign(c, {W: r.W, cog: r.cog, n: r.n, mn: r.mn, mx: r.mx, src: r.src, leaves: r.leaves, marks: r.marks, ed: Date.now()});
+    try {
+      c.parts = [];
+      const byModel = {}; r.wts.forEach(([m, id, w, how]) => (byModel[m] ||= []).push([id, w, how]));
+      for (const m in byModel) { const ids = byModel[m].map(x => x[0]); const guids = await api.viewer.convertToObjectIds(m, ids);
+        byModel[m].forEach((x, i) => c.parts.push({m, g: guids[i], w: x[1], how: x[2]})); }
+      c.srcG = [];
+      for (const sv of r.src) c.srcG.push({m: sv.modelId, g: await api.viewer.convertToObjectIds(sv.modelId, sv.ids)});
+    } catch (e) { c.parts = null; c.srcG = null; }
+  }
+  // aggiunge o toglie al baricentro gli elementi selezionati ora nel modello
+  async function editCog(c, g, mode) {
+    let sel = []; try { sel = ((await api.viewer.getSelection()) || []).filter(s => s.objectRuntimeIds && s.objectRuntimeIds.length); } catch (e) {}
+    if (!sel.length) { setState('<span class="warn">Seleziona prima nel modello gli elementi da ' + (mode === 'add' ? 'aggiungere a' : 'togliere da') + ' "' + esc(c.name) + '".</span>'); return; }
+    setState(`Aggiorno "${esc(c.name)}"…`, true);
+    try {
+      const by = new Map(); const put = (m, ids) => { if (!by.has(m)) by.set(m, new Set()); ids.forEach(i => by.get(m).add(i)); };
+      if (mode === 'add') {
+        (await srcSel(c)).forEach(l => put(l.modelId, l.ids));
+        sel.forEach(s => put(s.modelId, s.objectRuntimeIds));
+      } else {
+        const rem = new Map();
+        for (const s of sel) { const set = rem.get(s.modelId) || new Set(); s.objectRuntimeIds.forEach(i => set.add(i)); (await leafIds(s.modelId, s.objectRuntimeIds)).forEach(i => set.add(i)); rem.set(s.modelId, set); }
+        (await leafSel(c)).forEach(l => put(l.modelId, l.ids.filter(i => !(rem.get(l.modelId) || new Set()).has(i))));
+      }
+      const list = [...by.entries()].filter(([, v]) => v.size).map(([m, v]) => ({modelId: m, objectRuntimeIds: [...v]}));
+      if (!list.length) { setState('<span class="warn">Togliendo questi elementi il baricentro resterebbe vuoto: per eliminarlo usa la ×.</span>'); return; }
+      const r = await computeSel(list);
+      if (!r) throw new Error('nessun elemento con geometria');
+      const before = {W: c.W, n: c.n};
+      if (r.n === before.n && Math.abs(r.W - before.W) < 0.01) { setState(`Nessuna modifica: gli elementi selezionati ${mode === 'add' ? 'fanno già parte di' : 'non fanno parte di'} "${esc(c.name)}".`); return; }
+      await fillCog(c, r);
+      save(); await drawIcons(); if (hlCog === c.id) await focusCog(c, g); else render();
+      setState(`"${esc(c.name)}": ${mode === 'add' ? 'aggiunti' : 'tolti'} ${Math.abs(r.n - before.n)} elementi · ${kgt(before.W)} → ${kgt(r.W)}`);
+    } catch (e) { setState('<span class="ko">Modifica non riuscita: ' + esc(e && e.message || e) + '</span>'); }
+  }
+  function renderEditBtns() { document.querySelectorAll('[data-add],[data-rem]').forEach(b => { b.disabled = !cur; }); }
   const iconUrl = g => new URL(`cog-${g.color % PAL.length}.png?v=3`, location.href).href;
   let drawn = [];
   async function removeIcons(list) {
@@ -372,10 +409,13 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     $('#cogList').innerHTML = g.cogs.map(c => { const r = rel(g, c.cog);
       return `<div class="cog ${hlCog === c.id ? 'on' : ''}" data-c="${c.id}" style="--c:${PAL[g.color]}" title="Clic: evidenzia gli elementi che lo hanno generato">
         <div class="t"><span class="sw"></span><input value="${esc(c.name)}" data-rn="${c.id}" aria-label="Nome baricentro"><b class="mono">${kgt(c.W)}</b><button class="sm" data-pdf="${c.id}" title="Tavola PDF">PDF</button><button class="sm" data-dxf="${c.id}" title="Tavola DXF">DXF</button><button class="sm x" data-del="${c.id}" aria-label="Elimina baricentro">×</button></div>
-        <div class="d"><span>${c.n} el.</span><span>X ${nf(r[0], 3)}</span><span>Y ${nf(r[1], 3)}</span><span>Z ${nf(r[2], 3)}</span></div></div>`; }).join('') ||
+        <div class="d"><span>${c.n} el.</span><span>X ${nf(r[0], 3)}</span><span>Y ${nf(r[1], 3)}</span><span>Z ${nf(r[2], 3)}</span></div>
+        <div class="row"><button class="sm" data-add="${c.id}" title="Aggiunge a questo baricentro gli elementi selezionati ora nel modello" ${cur ? '' : 'disabled'}>+ Aggiungi selezione</button><button class="sm" data-rem="${c.id}" title="Toglie da questo baricentro gli elementi selezionati ora nel modello" ${cur ? '' : 'disabled'}>− Togli selezione</button></div></div>`; }).join('') ||
       '<div class="note">Nessun baricentro in questo gruppo. Seleziona degli elementi nel modello e premi "+ Salva nel gruppo".</div>';
     $('#cogList').querySelectorAll('.cog').forEach(el => el.onclick = ev => { if (ev.target.closest('input,button')) return; const c = g.cogs.find(x => x.id === +el.dataset.c); if (c) focusCog(c, g); });
     $('#cogList').querySelectorAll('[data-rn]').forEach(el => el.onchange = () => { const c = g.cogs.find(x => x.id === +el.dataset.rn); c.name = el.value || c.name; save(); render(); });
+    $('#cogList').querySelectorAll('[data-add]').forEach(el => el.onclick = () => editCog(g.cogs.find(x => x.id === +el.dataset.add), g, 'add'));
+    $('#cogList').querySelectorAll('[data-rem]').forEach(el => el.onclick = () => editCog(g.cogs.find(x => x.id === +el.dataset.rem), g, 'rem'));
     $('#cogList').querySelectorAll('[data-pdf]').forEach(el => el.onclick = () => exportCogs([g.cogs.find(x => x.id === +el.dataset.pdf)], g, 'pdf'));
     $('#cogList').querySelectorAll('[data-dxf]').forEach(el => el.onclick = () => exportCogs([g.cogs.find(x => x.id === +el.dataset.dxf)], g, 'dxf'));
     $('#cogList').querySelectorAll('[data-del]').forEach(el => el.onclick = async () => {
@@ -464,7 +504,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
         if (!lg) { map.set(rg.id, clone(rg)); continue; }
         if ((rg.t || 0) > (lg.t || 0)) Object.assign(lg, {name: rg.name, color: rg.color, origin: clone(rg.origin), rot: rg.rot, t: rg.t});
         const cm = new Map(lg.cogs.map(c => [c.id, c]));
-        for (const rc of rg.cogs) { const lc = cm.get(rc.id); if (!lc) lg.cogs.push(clone(rc)); else if ((rc.t || 0) > (lc.t || 0)) Object.assign(lc, {name: rc.name, t: rc.t}); }
+        for (const rc of rg.cogs) { const lc = cm.get(rc.id); if (!lc) lg.cogs.push(clone(rc)); else if ((rc.t || 0) > (lc.t || 0)) Object.assign(lc, clone(rc)); }
       }
       store.groups = [...map.values()].filter(g => !del.g.includes(g.id));
       store.groups.forEach(g => { g.cogs = g.cogs.filter(c => !del.c.includes(c.id)); });
