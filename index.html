@@ -96,18 +96,30 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     <button class="sm" id="icons" aria-pressed="true">Segni nel modello</button>
     <button class="sm" id="copy">Copia tabella</button>
   </div>
+  <div class="row"><b style="font-size:12px">Tavole del gruppo:</b><button class="sm pri" id="gPdf">PDF</button><button class="sm" id="gDxf">DXF</button></div>
   <div id="cogList" style="display:flex;flex-direction:column;gap:6px"></div>
   <div class="note" id="gTot"></div>
+</section>
+
+<section class="box" id="exp" hidden>
+  <h2>Esportazione</h2>
+  <div id="expState" class="note"></div>
+  <div class="row" id="ifcPick" hidden><label class="b" style="display:inline-block"><input type="file" id="ifcFile" accept=".ifc" hidden><button class="sm pri" id="ifcBtn" type="button">Scegli il file IFC dal computer</button></label></div>
+  <div id="files" style="display:flex;flex-direction:column;gap:3px"></div>
 </section>
 
 <details class="box">
   <summary>Impostazioni</summary>
   <label class="row"><input type="checkbox" id="expand" checked> Scomponi gli assiemi nei loro pezzi</label>
+  <label class="row"><input type="checkbox" id="boltW" checked> Nelle tavole aggiungi il peso dei bulloni (da volume)</label>
+  <label class="row"><input type="checkbox" id="boltD"> Disegna i bulloni nelle tavole</label>
   <label class="row">Densità per elementi senza peso <input type="number" id="rho" value="7850" step="10" style="width:80px"> kg/m³</label>
   <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"); se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con travi, lamiere e piatti l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati. Gruppi e baricentri restano salvati in questo browser, separati per progetto.</div>
 </details>
 
 <script src="tcwapi.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="draw.js"></script>
 <script>
 (async function () {
   const $ = s => document.querySelector(s);
@@ -117,6 +129,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   const kgt = W => W >= 1000 ? nf(W / 1000, 2) + ' t' : nf(W, 1) + ' kg';
   const setState = (t, busy) => { $('#state').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  let tokenWaiter = null;
   let api, cur = null, runId = 0, timer = null, pickMode = null, hlCog = null, showIcons = true, store;
 
   if (window.parent === window) { setState('<span class="warn">Questa pagina funziona solo dentro Trimble Connect: aggiungi l\'estensione al progetto con l\'indirizzo del manifest e aprila dal visualizzatore 3D.</span>'); return; }
@@ -125,6 +138,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
       if (event === 'viewer.onSelectionChanged') { clearTimeout(timer); timer = setTimeout(update, 250); }
       if (event === 'viewer.onPicked' && pickMode) onPicked(args && args.data);
       if (event === 'viewer.onIconPicked') onIconPicked(args && args.data);
+      if (event === 'extension.accessToken' && tokenWaiter) tokenWaiter(args && args.data);
     }, 30000);
     if (!api || !api.viewer) throw new Error('viewer non disponibile');
   } catch (e) { setState('<span class="ko">Impossibile collegarsi a Trimble Connect. Apri questa estensione dal visualizzatore 3D di un progetto.</span>'); return; }
@@ -156,6 +170,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     const v = pick(p => /^(volume|net ?volume|gross ?volume)$/i.test(p.name)); if (v > 0) return {w: v * +$('#rho').value, how: 'vol'};
     return {w: 0, how: P.some(p => /tekla bolt/i.test(p.set)) ? 'bolt' : 'none'};
   }
+  function markOf(o) { const P = allProps(o); const p = P.find(p => /^(assembly_pos|assembly\/cast unit mark)$/i.test(p.name) && p.value); return p ? String(p.value) : null; }
   const isAssembly = o => /elementassembly/i.test(o.class || '');
   const chunk = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
   async function leafIds(modelId, ids) {
@@ -173,7 +188,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     sel = (sel || []).filter(s => s.objectRuntimeIds && s.objectRuntimeIds.length);
     if (!sel.length) { cur = null; $('#cur').hidden = true; setState('Seleziona uno o più elementi nel modello, poi salva il baricentro nel gruppo.'); return; }
     setState('Calcolo in corso…', true);
-    const rows = [], src = [], leaves = [];
+    const rows = [], src = [], leaves = [], marks = new Set();
     try {
       for (const s of sel) {
         const ids = await leafIds(s.modelId, s.objectRuntimeIds);
@@ -182,7 +197,8 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
           const [props, boxes] = await Promise.all([api.viewer.getObjectProperties(s.modelId, c), api.viewer.getObjectBoundingBoxes(s.modelId, c)]);
           const bb = new Map(boxes.map(b => [b.id, b.boundingBox]));
           for (const o of props) { const b = bb.get(o.id); if (!b) continue; const {w, how} = weightOf(o);
-            rows.push({w, how, c: [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2], min: b.min, max: b.max}); }
+            const mk = markOf(o); if (mk) marks.add(mk);
+            rows.push({id: o.id, model: s.modelId, w, how, c: [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2], min: b.min, max: b.max}); }
           if (my !== runId) return;
         }
       }
@@ -191,7 +207,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     const W = rows.reduce((a, r) => a + r.w, 0);
     const cog = W > 0 ? [0, 1, 2].map(k => rows.reduce((a, r) => a + r.w * r.c[k], 0) / W) : null;
     const mn = ['x', 'y', 'z'].map(k => Math.min(...rows.map(r => r.min[k]))), mx = ['x', 'y', 'z'].map(k => Math.max(...rows.map(r => r.max[k])));
-    cur = {W, cog, n: rows.length, src, leaves, mn, mx,
+    cur = {W, cog, n: rows.length, src, leaves, mn, mx, marks: [...marks].sort(), wts: rows.map(r => [r.model, r.id, r.w, r.how]),
       nv: rows.filter(r => r.how === 'vol').length, nb: rows.filter(r => r.how === 'bolt').length, nn: rows.filter(r => r.how === 'none').length};
     renderCur(); setState(`Selezione: ${rows.length} elementi.`);
   }
@@ -211,17 +227,34 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   // ---------------- salvataggio baricentri
   $('#save').onclick = async () => {
     if (!cur || !cur.cog) return; const g = G();
-    const c = {id: store.nextIcon++, name: $('#newName').value.trim() || `COG ${g.cogs.length + 1}`, W: cur.W, cog: cur.cog, n: cur.n, mn: cur.mn, mx: cur.mx, src: cur.src, leaves: cur.leaves};
+    const c = {id: store.nextIcon++, name: $('#newName').value.trim() || `COG ${g.cogs.length + 1}`, W: cur.W, cog: cur.cog, n: cur.n, mn: cur.mn, mx: cur.mx, src: cur.src, leaves: cur.leaves, marks: cur.marks};
+    // GUID IFC dei pezzi e pesi: servono per le tavole anche dopo aver ricaricato il modello
+    try {
+      c.parts = [];
+      const byModel = {}; cur.wts.forEach(([m, id, w, how]) => (byModel[m] ||= []).push([id, w, how]));
+      for (const m in byModel) { const ids = byModel[m].map(x => x[0]); const guids = await api.viewer.convertToObjectIds(m, ids);
+        byModel[m].forEach((x, i) => c.parts.push({m, g: guids[i], w: x[1], how: x[2]})); }
+    } catch (e) { c.parts = null; }
     g.cogs.push(c); $('#newName').value = ''; save(); await drawIcons(); render();
     setState(`Salvato "${esc(c.name)}" nel gruppo "${esc(g.name)}".`);
   };
-  const iconUrl = g => new URL(`cog-${g.color % PAL.length}.png`, location.href).href;
+  const iconUrl = g => new URL(`cog-${g.color % PAL.length}.png?v=3`, location.href).href;
+  let drawn = [];
+  async function removeIcons(list) {
+    if (!list.length) return;
+    try { await api.viewer.removeIcon(list); } catch (e) { for (const ic of list) { try { await api.viewer.removeIcon(ic); } catch (e2) {} } }
+  }
   async function drawIcons() {
-    try { await api.viewer.removeIcon(); } catch (e) {}
+    await removeIcons(drawn); drawn = [];
     if (!showIcons) return;
     const icons = [];
     store.groups.forEach(g => g.cogs.forEach(c => icons.push({id: c.id, iconPath: iconUrl(g), position: {x: c.cog[0], y: c.cog[1], z: c.cog[2]}, size: 30})));
-    if (icons.length) { try { await api.viewer.addIcon(icons); } catch (e) { setState('<span class="warn">Il visualizzatore non ha accettato i segni: ' + esc(e && e.message || e) + '</span>'); } }
+    if (icons.length) { try { await api.viewer.addIcon(icons); drawn = icons; } catch (e) { setState('<span class="warn">Il visualizzatore non ha accettato i segni: ' + esc(e && e.message || e) + '</span>'); } }
+  }
+  // all'avvio toglie anche i segni rimasti da sessioni precedenti
+  async function purgeStale() {
+    const stale = []; for (let id = 1000; id < (store.nextIcon || 1000) + 5; id++) stale.push({id, iconPath: '', position: {x: 0, y: 0, z: 0}, size: 0});
+    await removeIcons(stale);
   }
 
   // ---------------- evidenziazione
@@ -301,11 +334,13 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     $('#oCog').innerHTML = '<option value="">Origine su un baricentro…</option>' + g.cogs.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
     $('#cogList').innerHTML = g.cogs.map(c => { const r = rel(g, c.cog);
       return `<div class="cog ${hlCog === c.id ? 'on' : ''}" data-c="${c.id}" style="--c:${PAL[g.color]}" title="Clic: evidenzia gli elementi che lo hanno generato">
-        <div class="t"><span class="sw"></span><input value="${esc(c.name)}" data-rn="${c.id}" aria-label="Nome baricentro"><b class="mono">${kgt(c.W)}</b><button class="sm x" data-del="${c.id}" aria-label="Elimina baricentro">×</button></div>
+        <div class="t"><span class="sw"></span><input value="${esc(c.name)}" data-rn="${c.id}" aria-label="Nome baricentro"><b class="mono">${kgt(c.W)}</b><button class="sm" data-pdf="${c.id}" title="Tavola PDF">PDF</button><button class="sm" data-dxf="${c.id}" title="Tavola DXF">DXF</button><button class="sm x" data-del="${c.id}" aria-label="Elimina baricentro">×</button></div>
         <div class="d"><span>${c.n} el.</span><span>X ${nf(r[0], 3)}</span><span>Y ${nf(r[1], 3)}</span><span>Z ${nf(r[2], 3)}</span></div></div>`; }).join('') ||
       '<div class="note">Nessun baricentro in questo gruppo. Seleziona degli elementi nel modello e premi "+ Salva nel gruppo".</div>';
     $('#cogList').querySelectorAll('.cog').forEach(el => el.onclick = ev => { if (ev.target.closest('input,button')) return; const c = g.cogs.find(x => x.id === +el.dataset.c); if (c) focusCog(c, g); });
     $('#cogList').querySelectorAll('[data-rn]').forEach(el => el.onchange = () => { const c = g.cogs.find(x => x.id === +el.dataset.rn); c.name = el.value || c.name; save(); render(); });
+    $('#cogList').querySelectorAll('[data-pdf]').forEach(el => el.onclick = () => exportCogs([g.cogs.find(x => x.id === +el.dataset.pdf)], g, 'pdf'));
+    $('#cogList').querySelectorAll('[data-dxf]').forEach(el => el.onclick = () => exportCogs([g.cogs.find(x => x.id === +el.dataset.dxf)], g, 'dxf'));
     $('#cogList').querySelectorAll('[data-del]').forEach(el => el.onclick = async () => {
       if (!confirmInline(el, 'Elimina questo baricentro?')) return;
       const i = g.cogs.findIndex(x => x.id === +el.dataset.del); const c = g.cogs[i]; g.cogs.splice(i, 1);
@@ -323,9 +358,131 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     try { await navigator.clipboard.writeText(txt); } catch (e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
     setState('Tabella del gruppo copiata: incollala in Excel.');
   };
+  // ================= esportazione tavole (PDF / DXF) =================
+  const WEBIFC_URL = 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/';
+  const ifcCache = {};
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  const safe = t => String(t).replace(/[^\w\-]+/g, '_').replace(/_+/g, '_').slice(0, 60);
+  const expMsg = (t, busy) => { $('#exp').hidden = false; $('#expState').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
+  function loadScript(src) { return new Promise((res, rej) => { if (window.WebIFC) return res(); const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error('impossibile caricare la libreria IFC')); document.head.appendChild(sc); }); }
+  async function ensureWebIfc() { expMsg('Carico il lettore IFC…', true); await loadScript(WEBIFC_URL + 'web-ifc-api-iife.js'); await PBDraw.initIfc(window.WebIFC, WEBIFC_URL); }
+  async function getToken() {
+    const t = await api.extension.requestPermission('accesstoken');
+    if (t === 'denied') throw new Error('permesso di accesso negato');
+    if (t && t !== 'pending' && t.length > 20) return t;
+    expMsg('Trimble Connect chiede il permesso di accesso per l\'estensione: accettalo per scaricare il modello.', true);
+    return await new Promise((res, rej) => { tokenWaiter = v => { tokenWaiter = null; res(v); }; setTimeout(() => rej(new Error('nessuna risposta alla richiesta di accesso')), 120000); });
+  }
+  const HOSTS = {europe: 'https://app21.connect.trimble.com', northamerica: 'https://app.connect.trimble.com', asia: 'https://app31.connect.trimble.com', australia: 'https://app32.connect.trimble.com'};
+  const isIfc = b => new TextDecoder().decode(b.slice(0, 16)).startsWith('ISO-10303-21');
+  async function downloadIfc(modelId) {
+    let f = null; try { f = await api.viewer.getLoadedModel(modelId); } catch (e) {}
+    if (f && f.blob) { try { const b = f.blob; const bytes = typeof b === 'string' ? Uint8Array.from(atob(b), ch => ch.charCodeAt(0)) : new Uint8Array(await b.arrayBuffer()); if (isIfc(bytes)) return {bytes, name: f.name}; } catch (e) {} }
+    const fileId = (f && f.file && f.file.id) || (f && f.id) || modelId, ver = f && f.versionId;
+    const tok = await getToken();
+    let proj = {}; try { proj = await api.project.getProject(); } catch (e) {}
+    const loc = String(proj.location || '').toLowerCase().replace(/[^a-z]/g, '');
+    const hosts = [HOSTS[loc], ...Object.values(HOSTS)].filter((h, i, a) => h && a.indexOf(h) === i);
+    let last;
+    for (const h of hosts) for (const q of (ver ? ['?versionId=' + encodeURIComponent(ver), ''] : [''])) {
+      try {
+        expMsg('Scarico il modello IFC da Trimble Connect…', true);
+        const r = await fetch(`${h}/tc/api/2.0/files/fs/${encodeURIComponent(fileId)}/downloadurl${q}`, {headers: {Authorization: 'Bearer ' + tok}});
+        if (!r.ok) { last = new Error(`HTTP ${r.status} da ${h.replace('https://', '')}`); continue; }
+        const j = await r.json(); const url = typeof j === 'string' ? j : (j.url || j.downloadUrl || j.downloadURL);
+        const d = await fetch(url); if (!d.ok) { last = new Error('download HTTP ' + d.status); continue; }
+        const bytes = new Uint8Array(await d.arrayBuffer());
+        if (isIfc(bytes)) return {bytes, name: (f && f.name) || 'modello.ifc'};
+        last = new Error('il file scaricato non è un IFC');
+      } catch (e) { last = e; }
+    }
+    throw last || new Error('download non riuscito');
+  }
+  function askLocalFile() {
+    return new Promise(res => {
+      $('#ifcPick').hidden = false; $('#ifcBtn').onclick = () => $('#ifcFile').click();
+      $('#ifcFile').onchange = async e => { const fl = e.target.files[0]; if (!fl) return; $('#ifcPick').hidden = true; res({bytes: new Uint8Array(await fl.arrayBuffer()), name: fl.name}); e.target.value = ''; };
+    });
+  }
+  async function getModel(modelId) {
+    if (ifcCache[modelId]) return ifcCache[modelId];
+    await ensureWebIfc();
+    let src;
+    try { src = await downloadIfc(modelId); }
+    catch (e) { expMsg(`<span class="warn">Non riesco a scaricare l'IFC da Trimble Connect (${esc(e && e.message || e)}). Scegli lo stesso file IFC dal computer: viene letto solo in questo browser, non viene caricato da nessuna parte.</span>`); src = await askLocalFile(); }
+    if (!isIfc(src.bytes)) throw new Error('il file scelto non è un IFC');
+    expMsg('Lettura del modello IFC…', true); await tick();
+    return ifcCache[modelId] = {m: PBDraw.openIfc(modelId, src.bytes), name: src.name};
+  }
+  async function partsOf(c) { // per i baricentri salvati prima di questa versione
+    if (c.parts && c.parts.length) return c.parts;
+    const parts = [];
+    for (const l of c.leaves) {
+      const props = [], guids = [];
+      for (const ch of chunk(l.ids, 400)) { props.push(...await api.viewer.getObjectProperties(l.modelId, ch)); guids.push(...await api.viewer.convertToObjectIds(l.modelId, ch)); }
+      props.forEach((o, i) => { const {w, how} = weightOf(o); parts.push({m: l.modelId, g: guids[i], w, how}); });
+    }
+    c.parts = parts; save(); return parts;
+  }
+  function saveFile(name, blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    const row = document.createElement('div'); row.className = 'note';
+    row.innerHTML = `Pronto: <a href="${url}" download="${esc(name)}" target="_blank" rel="noopener">${esc(name)}</a>`;
+    $('#files').prepend(row);
+  }
+  async function exportCogs(cogs, g, kind) {
+    cogs = cogs.filter(Boolean); if (!cogs.length) { setState('Nessun baricentro da esportare in questo gruppo.'); return; }
+    try {
+      let proj = {}; try { proj = await api.project.getProject(); } catch (e) {}
+      const sheets = [], notes = [];
+      for (const c of cogs) {
+        const parts = await partsOf(c);
+        if (!parts || !parts.length) throw new Error(`"${c.name}": non trovo gli identificativi dei pezzi`);
+        const items = []; let ref = null, missing = 0;
+        for (const part of parts) {
+          const M = await getModel(part.m);
+          const eid = M.m.g2e.get(part.g); if (eid == null) { missing++; continue; }
+          if (!M.m.ref) M.m.ref = c.cog.map(v => Math.round(v));
+          if (!ref) ref = M.m.ref;
+          const lv = PBDraw.leaves(M.m, eid, new Set());
+          for (const e of lv) { const ms = PBDraw.meshOf(M.m, e, ref); if (ms.idx.length) items.push({ms, part, n: lv.size}); }
+        }
+        if (!items.length) throw new Error(`"${c.name}": i pezzi non si trovano nel file IFC. È lo stesso modello aperto nel visualizzatore?`);
+        expMsg(`Disegno "${esc(c.name)}"…`, true); await tick();
+        // allineamento IFC -> coordinate del visualizzatore (confronto degli ingombri)
+        const bb = PBDraw.bboxOf(items.map(i => i.ms));
+        const o1 = [0, 1, 2].map(i => c.mn[i] - (bb.mn[i] + ref[i])), o2 = [0, 1, 2].map(i => c.mx[i] - (bb.mx[i] + ref[i]));
+        const off = [0, 1, 2].map(i => (o1[i] + o2[i]) / 2), mism = Math.max(...[0, 1, 2].map(i => Math.abs(o1[i] - o2[i])));
+        const ref2 = ref.map((v, i) => v + off[i]);
+        // peso e baricentro sui volumi reali
+        const rho = +$('#rho').value; let W = 0, Wb = 0; const C = [0, 0, 0];
+        for (const it of items) {
+          const vc = PBDraw.volCentroid(it.ms); let w;
+          if (it.part.how === 'bolt' || it.ms.bolt) { if (!$('#boltW').checked) continue; w = vc.V * rho; Wb += w; }
+          else w = it.part.w > 0 ? it.part.w / it.n : vc.V * rho;
+          W += w; for (let d = 0; d < 3; d++) C[d] += w * vc.c[d];
+        }
+        const cog = C.map((v, i) => v / W + ref2[i]);
+        const sh = PBDraw.buildSheet({meshes: items.map(i => i.ms), ref: ref2, cog, origin: g.origin, rot: g.rot, name: c.name, weight: W, boltWeight: Wb,
+          nPieces: c.n, marks: c.marks || [], group: g.name, project: proj.name || '', model: Object.values(ifcCache).map(x => x.name).join(', '), drawBolts: $('#boltD').checked});
+        sheets.push({prims: sh.prims, S: sh.scale});
+        const dc = Math.hypot(cog[0] - c.cog[0], cog[1] - c.cog[1], cog[2] - c.cog[2]);
+        notes.push(`${esc(c.name)}: ${kgt(W)}, COG sui volumi a ${nf(dc * 100, 1)} cm da quello del pannello` + (missing ? ` · <span class="warn">${missing} pezzi non trovati nell'IFC</span>` : '') + (mism > 0.05 ? ` · <span class="warn">coordinate IFC e visualizzatore non allineate (${nf(mism * 100, 0)} cm)</span>` : ''));
+        await tick();
+      }
+      const base = safe(g.name) + (cogs.length === 1 ? '_' + safe(cogs[0].name) : '_tavole');
+      if (kind === 'pdf') { const doc = new window.jspdf.jsPDF({orientation: 'landscape', unit: 'mm', format: 'a3'}); sheets.forEach((sh, i) => PBDraw.toPdf(doc, sh.prims, i > 0)); saveFile(base + '.pdf', doc.output('blob')); }
+      else saveFile(base + '.dxf', new Blob([PBDraw.toDxfMulti(sheets)], {type: 'application/dxf'}));
+      expMsg(notes.join('<br>'));
+    } catch (e) { expMsg('<span class="ko">Esportazione non riuscita: ' + esc(e && e.message || e) + '</span>'); }
+  }
+  $('#gPdf').onclick = () => exportCogs(G().cogs, G(), 'pdf');
+  $('#gDxf').onclick = () => exportCogs(G().cogs, G(), 'dxf');
+
   $('#expand').onchange = update; $('#rho').onchange = update;
 
-  render(); await drawIcons(); update();
+  render(); await purgeStale(); await drawIcons(); update();
 })();
 </script>
 </body>

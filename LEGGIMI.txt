@@ -38,7 +38,24 @@ INSTALLAZIONE (una volta sola)
 4. Apri un modello nel visualizzatore 3D: l'estensione compare nel pannello
    laterale delle estensioni.
 
+TAVOLE PDF / DXF (versione 3)
+Per ogni baricentro (pulsanti PDF / DXF sulla scheda) o per tutto il gruppo
+("Tavole del gruppo") l'estensione genera una tavola A3 con prospetto,
+pianta, sezione e vista 3D, linee nascoste rimosse, quote in mm dal
+baricentro agli estremi, simbolo del baricentro e tabella con peso e
+coordinate. Le viste 2D usano assi e origine del gruppo: per tavole
+allineate al pezzo imposta la direzione dell'asse X.
+Il baricentro delle tavole è calcolato sui volumi reali dei pezzi letti
+dal file IFC; i bulloni sono aggiunti con il loro volume x densità
+(disattivabile nelle Impostazioni).
+Il file IFC viene scaricato da Trimble Connect (serve accettare la
+richiesta di accesso dell'estensione); se non è possibile, l'estensione
+chiede di sceglierlo dal computer e lo legge solo nel browser.
+Il DXF è in millimetri reali per le viste 2D: in AutoCAD si apre e si
+salva come DWG.
+
 FILE
 index.html   pannello dell'estensione
+draw.js      lettura IFC, viste, PDF e DXF
 tcwapi.js    Trimble Connect Workspace API 0.3.38 (libreria ufficiale)
-manifest.json, icon.png, cog.png
+manifest.json, icon.png, cog.png, cog-0..cog-5.png (segni colorati dei gruppi)
