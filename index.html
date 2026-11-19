@@ -5,33 +5,49 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Peso e baricentro</title>
 <style>
-:root{--ink:#1d2328;--muted:#5f6a72;--line:#d9dddb;--bg:#fff;--soft:#f4f5f3;--accent:#0063a3;--ok:#2e7d4f;--warn:#b36b00;--ko:#c0392b;
+:root{--ink:#1d2328;--muted:#5f6a72;--line:#d9dddb;--bg:#fff;--soft:#f5f6f4;--accent:#0063a3;--ok:#2e7d4f;--warn:#b36b00;--ko:#c0392b;
   --f:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--m:ui-monospace,"Cascadia Mono",Consolas,monospace}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%}
+[hidden]{display:none!important}
+html,body{margin:0}
 body{font:13px/1.45 var(--f);color:var(--ink);background:var(--bg);padding:12px;display:flex;flex-direction:column;gap:10px}
 h1{font-size:15px;margin:0;font-weight:600}
+h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:2px 0 0;font-weight:600}
 .muted{color:var(--muted)}
-.box{border:1px solid var(--line);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px}
-.big{font:600 24px/1.1 var(--f);font-variant-numeric:tabular-nums}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px}
-.kv span:nth-child(odd){color:var(--muted)}
-.kv span:nth-child(even){font-family:var(--m);text-align:right;font-variant-numeric:tabular-nums}
+.box{border:1px solid var(--line);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:7px}
+.big{font:600 22px/1.1 var(--f);font-variant-numeric:tabular-nums}
+.kv{display:grid;grid-template-columns:auto 1fr 1fr;gap:1px 8px;align-items:baseline}
+.kv .h{color:var(--muted);font-size:11px;text-align:right}
+.kv span.l{color:var(--muted)}
+.kv span.v{font-family:var(--m);text-align:right;font-variant-numeric:tabular-nums}
+.kv span.a{font-family:var(--m);text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);font-size:11.5px}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-button{font:500 12px var(--f);padding:6px 10px;border:1px solid var(--accent);background:#fff;color:var(--accent);border-radius:4px;cursor:pointer}
+.grow{flex:1;min-width:0}
+button{font:500 12px var(--f);padding:5px 9px;border:1px solid var(--accent);background:#fff;color:var(--accent);border-radius:4px;cursor:pointer}
 button.pri{background:var(--accent);color:#fff}
+button.sm{padding:2px 7px;font-size:11.5px}
+button.x{border-color:var(--ko);color:var(--ko)}
 button:disabled{opacity:.45;cursor:default}
-button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-input[type=number]{width:80px;font:12px var(--m);padding:3px 5px;border:1px solid var(--line);border-radius:4px}
+button[aria-pressed="true"]{background:var(--accent);color:#fff}
+#oPick[aria-pressed="true"],#axPick[aria-pressed="true"]{background:var(--warn);border-color:var(--warn)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input,select{font:12.5px var(--f);padding:4px 6px;border:1px solid var(--line);border-radius:4px;min-width:0;background:#fff;color:var(--ink)}
+input[type=number]{font-family:var(--m);width:100%}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--muted)}
 .note{font-size:11.5px;color:var(--muted)}
 .warn{color:var(--warn)} .ko{color:var(--ko)}
-table{border-collapse:collapse;width:100%;font-size:11.5px}
-th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:3px 4px;position:sticky;top:0;background:#fff}
-td{padding:2px 4px;border-bottom:1px solid #eef0ef;font-family:var(--m);font-variant-numeric:tabular-nums;white-space:nowrap}
-td:first-child{font-family:var(--f);max-width:120px;overflow:hidden;text-overflow:ellipsis}
-.tw{max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:4px}
+.cog{border:1px solid var(--line);border-left:4px solid var(--c);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:3px;cursor:pointer}
+.cog.on{background:var(--soft);box-shadow:0 0 0 1px var(--c) inset}
+.cog .t{display:flex;gap:6px;align-items:center}
+.cog .t input{flex:1;font-weight:600;border-color:transparent;background:transparent;padding:2px 3px}
+.cog .t input:hover,.cog .t input:focus{border-color:var(--line);background:#fff}
+.cog .d{font-family:var(--m);font-size:11.5px;font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto repeat(3,1fr);gap:0 8px}
+.cog .d span{text-align:right} .cog .d span:first-child{text-align:left;color:var(--muted)}
+.sw{width:11px;height:11px;border-radius:50%;display:inline-block;background:var(--c);flex:none}
 #state{font-size:12px}
-.spin{display:inline-block;width:10px;height:10px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s 0.8s linear infinite;vertical-align:-1px;margin-right:4px}
+.spin{display:inline-block;width:10px;height:10px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;vertical-align:-1px;margin-right:4px}
 @keyframes s{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.spin{animation:none}}
 </style>
@@ -40,36 +56,55 @@ td:first-child{font-family:var(--f);max-width:120px;overflow:hidden;text-overflo
 <h1>Peso e baricentro</h1>
 <div id="state" class="muted">Connessione a Trimble Connect…</div>
 
-<div class="box" id="res" hidden>
+<section class="box" id="cur" hidden>
+  <h2>Selezione attuale</h2>
   <div class="row" style="justify-content:space-between;align-items:baseline">
-    <div><div class="muted">Peso totale</div><div class="big" id="w">–</div></div>
-    <div style="text-align:right"><div class="muted">Elementi</div><div class="big" id="n" style="font-size:18px">–</div></div>
+    <div class="big" id="w">–</div><div class="muted"><span id="n">0</span> elementi</div>
   </div>
-  <div class="kv">
-    <span>COG X</span><span id="cx">–</span>
-    <span>COG Y</span><span id="cy">–</span>
-    <span>COG Z</span><span id="cz">–</span>
-    <span>Ingombro X × Y</span><span id="dxy">–</span>
-    <span>Altezza (Z min / max)</span><span id="dz">–</span>
-  </div>
+  <div class="kv" id="curKv"></div>
   <div id="src" class="note"></div>
-  <div class="row">
-    <button class="pri" id="mark">Mostra COG nel modello</button>
-    <button id="unmark">Togli segno</button>
-    <button id="copy">Copia risultati</button>
-  </div>
-</div>
+  <div class="row"><input id="newName" class="grow" placeholder="Nome baricentro"><button class="pri" id="save">+ Salva nel gruppo</button></div>
+</section>
 
-<details class="box" id="detBox" hidden>
-  <summary>Dettaglio elementi (<span id="nd">0</span>)</summary>
-  <div class="tw"><table id="tab"></table></div>
-</details>
+<section class="box">
+  <div class="row"><h2 class="grow">Gruppo di baricentri</h2><button class="sm" id="gNew">+ Nuovo gruppo</button></div>
+  <div class="row"><span class="sw" id="gSw"></span><select id="gSel" class="grow" aria-label="Gruppo attivo"></select></div>
+  <div class="row"><input id="gName" class="grow" aria-label="Nome del gruppo"><button class="sm x" id="gDel">Elimina gruppo</button></div>
+  <details id="oBox">
+    <summary><b>Origine 0,0,0 del gruppo</b> <span class="muted" id="oSum"></span></summary>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+      <div class="g3" style="grid-template-columns:1.25fr 1.25fr .9fr">
+        <label class="f">X₀ (m)<input type="number" id="oX" step="0.001"></label>
+        <label class="f">Y₀ (m)<input type="number" id="oY" step="0.001"></label>
+        <label class="f">Z₀ (m)<input type="number" id="oZ" step="0.001"></label>
+      </div>
+      <label class="f" style="max-width:140px">Rotazione assi (°)<input type="number" id="oR" step="0.1"></label>
+      <div class="row">
+        <button class="sm" id="oPick" aria-pressed="false">Clicca un punto nel modello</button>
+        <select id="oCog" aria-label="Origine su un baricentro"><option value="">Origine su un baricentro…</option></select>
+        <button class="sm" id="oZero">Origine del modello</button>
+      </div>
+      <div class="row">
+        <button class="sm" id="axPick" aria-pressed="false">Direzione asse X: clicca un 2° punto</button>
+      </div>
+      <div class="note">Le coordinate X₀, Y₀, Z₀ sono quelle del modello in Trimble Connect. "Rot. assi" ruota X e Y attorno all'asse verticale, in senso antiorario visto dall'alto: per esempio, imposta l'asse X lungo l'asse della campata.</div>
+    </div>
+  </details>
+  <div class="row">
+    <button class="sm" id="showAll" aria-pressed="false">Evidenzia tutti</button>
+    <button class="sm" id="clearHl">Togli evidenziazione</button>
+    <button class="sm" id="icons" aria-pressed="true">Segni nel modello</button>
+    <button class="sm" id="copy">Copia tabella</button>
+  </div>
+  <div id="cogList" style="display:flex;flex-direction:column;gap:6px"></div>
+  <div class="note" id="gTot"></div>
+</section>
 
 <details class="box">
   <summary>Impostazioni</summary>
   <label class="row"><input type="checkbox" id="expand" checked> Scomponi gli assiemi nei loro pezzi</label>
-  <label class="row">Densità per elementi senza peso <input type="number" id="rho" value="7850" step="10"> kg/m³</label>
-  <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"). Se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con pezzi prismatici (travi, lamiere, piatti) l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. Le coordinate sono quelle del visualizzatore di Trimble Connect, in metri. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati.</div>
+  <label class="row">Densità per elementi senza peso <input type="number" id="rho" value="7850" step="10" style="width:80px"> kg/m³</label>
+  <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"); se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con travi, lamiere e piatti l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati. Gruppi e baricentri restano salvati in questo browser, separati per progetto.</div>
 </details>
 
 <script src="tcwapi.js"></script>
@@ -77,141 +112,220 @@ td:first-child{font-family:var(--f);max-width:120px;overflow:hidden;text-overflo
 (async function () {
   const $ = s => document.querySelector(s);
   const WS = window.TrimbleConnectWorkspace || window.WorkspaceAPI;
+  const PAL = ['#d62728', '#1f77b4', '#2ca02c', '#9467bd', '#ff7f0e', '#17becf'];
   const nf = (v, d) => v.toLocaleString('it-IT', {minimumFractionDigits: d, maximumFractionDigits: d});
+  const kgt = W => W >= 1000 ? nf(W / 1000, 2) + ' t' : nf(W, 1) + ' kg';
   const setState = (t, busy) => { $('#state').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
-  let api, last = null, iconOn = false, runId = 0, timer = null;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  let api, cur = null, runId = 0, timer = null, pickMode = null, hlCog = null, showIcons = true, store;
 
+  if (window.parent === window) { setState('<span class="warn">Questa pagina funziona solo dentro Trimble Connect: aggiungi l\'estensione al progetto con l\'indirizzo del manifest e aprila dal visualizzatore 3D.</span>'); return; }
   try {
     api = await WS.connect(window.parent, (event, args) => {
       if (event === 'viewer.onSelectionChanged') { clearTimeout(timer); timer = setTimeout(update, 250); }
+      if (event === 'viewer.onPicked' && pickMode) onPicked(args && args.data);
+      if (event === 'viewer.onIconPicked') onIconPicked(args && args.data);
     }, 30000);
-  } catch (e) {
-    setState('<span class="ko">Impossibile collegarsi a Trimble Connect. Apri questa estensione dal visualizzatore 3D di un progetto.</span>');
-    return;
+    if (!api || !api.viewer) throw new Error('viewer non disponibile');
+  } catch (e) { setState('<span class="ko">Impossibile collegarsi a Trimble Connect. Apri questa estensione dal visualizzatore 3D di un progetto.</span>'); return; }
+
+  // ---------------- archivio (per progetto, nel browser)
+  let projKey = 'default';
+  try { const p = await api.project.getProject(); if (p && p.id) projKey = p.id; } catch (e) {}
+  const KEY = 'peso-baricentro:' + projKey;
+  const newGroup = (name, i) => ({id: Date.now() + Math.floor(Math.random() * 1000), name, color: i % PAL.length, origin: {x: 0, y: 0, z: 0}, rot: 0, cogs: []});
+  try { store = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+  if (!store || !store.groups || !store.groups.length) store = {groups: [newGroup('Gruppo 1', 0)], active: 0, nextIcon: 1000};
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} };
+  const G = () => store.groups[Math.min(store.active, store.groups.length - 1)];
+
+  // ---------------- coordinate relative al gruppo
+  function rel(g, p) {
+    const dx = p[0] - g.origin.x, dy = p[1] - g.origin.y, dz = p[2] - g.origin.z, r = g.rot * Math.PI / 180;
+    return [dx * Math.cos(r) + dy * Math.sin(r), -dx * Math.sin(r) + dy * Math.cos(r), dz];
   }
 
-  // ---- lettura proprietà
-  const allProps = o => (o.properties || []).flatMap(ps => (ps.properties || []).map(p => ({set: ps.name || '', name: p.name, value: p.value, type: p.type})));
+  // ---------------- lettura proprietà
+  const allProps = o => (o.properties || []).flatMap(ps => (ps.properties || []).map(p => ({set: ps.name || '', name: p.name, value: p.value})));
   const num = v => { const x = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : null; };
   function weightOf(o) {
-    const P = allProps(o);
-    const pick = (fn) => { const p = P.find(fn); return p ? num(p.value) : null; };
-    let w = pick(p => /tekla quantity/i.test(p.set) && /^weight$/i.test(p.name));
-    if (w != null && w > 0) return {w, how: 'prop'};
-    w = pick(p => /^(net ?weight|weight|peso|mass|gross ?weight)$/i.test(p.name));
-    if (w != null && w > 0) return {w, how: 'prop'};
-    w = pick(p => /cast unit weight|assembly weight/i.test(p.name));
-    if (w != null && w > 0) return {w, how: 'prop'};
-    const v = pick(p => /^(volume|net ?volume|gross ?volume)$/i.test(p.name));
-    if (v != null && v > 0) return {w: v * +$('#rho').value, how: 'vol'};
-    const bolt = P.some(p => /tekla bolt/i.test(p.set));
-    return {w: 0, how: bolt ? 'bolt' : 'none'};
-  }
-  function labelOf(o) {
-    const P = allProps(o);
-    const f = re => { const p = P.find(p => re.test(p.name) && p.value !== '' && p.value != null); return p ? String(p.value) : null; };
-    const asm = f(/^(assembly_pos|assembly\/cast unit mark)$/i), part = f(/^part_pos$/i);
-    const name = (o.product && o.product.name) || o.class || ('#' + o.id);
-    return [asm, part && part !== asm ? part : null].filter(Boolean).join(' / ') || name;
+    const P = allProps(o), pick = fn => { const p = P.find(fn); return p ? num(p.value) : null; };
+    let w = pick(p => /tekla quantity/i.test(p.set) && /^weight$/i.test(p.name)); if (w > 0) return {w, how: 'prop'};
+    w = pick(p => /^(net ?weight|weight|peso|mass|gross ?weight)$/i.test(p.name)); if (w > 0) return {w, how: 'prop'};
+    w = pick(p => /cast unit weight|assembly weight/i.test(p.name)); if (w > 0) return {w, how: 'prop'};
+    const v = pick(p => /^(volume|net ?volume|gross ?volume)$/i.test(p.name)); if (v > 0) return {w: v * +$('#rho').value, how: 'vol'};
+    return {w: 0, how: P.some(p => /tekla bolt/i.test(p.set)) ? 'bolt' : 'none'};
   }
   const isAssembly = o => /elementassembly/i.test(o.class || '');
   const chunk = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
-
   async function leafIds(modelId, ids) {
     if (!$('#expand').checked) return ids;
-    const props = [];
-    for (const c of chunk(ids, 400)) props.push(...await api.viewer.getObjectProperties(modelId, c));
-    const asm = props.filter(isAssembly).map(o => o.id);
-    const out = new Set(props.filter(o => !isAssembly(o)).map(o => o.id));
-    if (asm.length) {
-      try {
-        const kids = await api.viewer.getHierarchyChildren(modelId, asm, 4 /* ElementAssembly */, true);
-        if (kids && kids.length) kids.forEach(k => out.add(k.id)); else asm.forEach(i => out.add(i));
-      } catch (e) { asm.forEach(i => out.add(i)); }
-    }
+    const props = []; for (const c of chunk(ids, 400)) props.push(...await api.viewer.getObjectProperties(modelId, c));
+    const asm = props.filter(isAssembly).map(o => o.id), out = new Set(props.filter(o => !isAssembly(o)).map(o => o.id));
+    if (asm.length) { try { const k = await api.viewer.getHierarchyChildren(modelId, asm, 4, true); (k && k.length ? k.map(x => x.id) : asm).forEach(i => out.add(i)); } catch (e) { asm.forEach(i => out.add(i)); } }
     return [...out];
   }
 
+  // ---------------- selezione attuale
   async function update() {
-    const my = ++runId;
-    let sel;
-    try { sel = await api.viewer.getSelection(); } catch (e) { setState('<span class="ko">Errore nel leggere la selezione: ' + e + '</span>'); return; }
+    const my = ++runId; let sel;
+    try { sel = await api.viewer.getSelection(); } catch (e) { setState('<span class="ko">Errore nel leggere la selezione: ' + esc(e) + '</span>'); return; }
     sel = (sel || []).filter(s => s.objectRuntimeIds && s.objectRuntimeIds.length);
-    if (!sel.length) { last = null; $('#res').hidden = true; $('#detBox').hidden = true; setState('Seleziona uno o più elementi nel modello.'); return; }
+    if (!sel.length) { cur = null; $('#cur').hidden = true; setState('Seleziona uno o più elementi nel modello, poi salva il baricentro nel gruppo.'); return; }
     setState('Calcolo in corso…', true);
-    const rows = [];
+    const rows = [], src = [], leaves = [];
     try {
       for (const s of sel) {
         const ids = await leafIds(s.modelId, s.objectRuntimeIds);
+        src.push({modelId: s.modelId, ids: s.objectRuntimeIds.slice()}); leaves.push({modelId: s.modelId, ids});
         for (const c of chunk(ids, 400)) {
           const [props, boxes] = await Promise.all([api.viewer.getObjectProperties(s.modelId, c), api.viewer.getObjectBoundingBoxes(s.modelId, c)]);
           const bb = new Map(boxes.map(b => [b.id, b.boundingBox]));
-          for (const o of props) {
-            const b = bb.get(o.id); if (!b) continue;
-            const {w, how} = weightOf(o);
-            rows.push({id: o.id, model: s.modelId, label: labelOf(o), cls: o.class, w, how,
-              c: [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2], min: b.min, max: b.max});
-          }
+          for (const o of props) { const b = bb.get(o.id); if (!b) continue; const {w, how} = weightOf(o);
+            rows.push({w, how, c: [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2], min: b.min, max: b.max}); }
           if (my !== runId) return;
         }
       }
-    } catch (e) { setState('<span class="ko">Errore durante il calcolo: ' + (e && e.message || e) + '</span>'); return; }
+    } catch (e) { setState('<span class="ko">Errore durante il calcolo: ' + esc(e && e.message || e) + '</span>'); return; }
     if (my !== runId) return;
-    show(rows);
-  }
-
-  function show(rows) {
     const W = rows.reduce((a, r) => a + r.w, 0);
-    let cog = null;
-    if (W > 0) cog = [0, 1, 2].map(k => rows.reduce((a, r) => a + r.w * r.c[k], 0) / W);
-    const mn = {x: Math.min(...rows.map(r => r.min.x)), y: Math.min(...rows.map(r => r.min.y)), z: Math.min(...rows.map(r => r.min.z))};
-    const mx = {x: Math.max(...rows.map(r => r.max.x)), y: Math.max(...rows.map(r => r.max.y)), z: Math.max(...rows.map(r => r.max.z))};
-    last = {rows, W, cog, mn, mx};
-    $('#res').hidden = false; $('#detBox').hidden = false;
-    $('#w').textContent = W >= 1000 ? nf(W / 1000, 2) + ' t' : nf(W, 1) + ' kg';
-    $('#n').textContent = rows.length;
-    $('#cx').textContent = cog ? nf(cog[0], 3) + ' m' : '–';
-    $('#cy').textContent = cog ? nf(cog[1], 3) + ' m' : '–';
-    $('#cz').textContent = cog ? nf(cog[2], 3) + ' m' : '–';
-    $('#dxy').textContent = nf(mx.x - mn.x, 2) + ' × ' + nf(mx.y - mn.y, 2) + ' m';
-    $('#dz').textContent = nf(mn.z, 2) + ' / ' + nf(mx.z, 2) + ' m';
-    const nv = rows.filter(r => r.how === 'vol').length, nb = rows.filter(r => r.how === 'bolt').length, nn = rows.filter(r => r.how === 'none').length;
-    const msg = [];
-    if (nv) msg.push(`<span class="warn">${nv} elementi pesati da volume × densità</span>`);
-    if (nb) msg.push(`${nb} bulloni non conteggiati`);
-    if (nn) msg.push(`<span class="warn">${nn} elementi senza peso né volume</span>`);
-    $('#src').innerHTML = msg.join(' · ') || 'Tutti i pesi letti dalle proprietà del modello.';
-    $('#nd').textContent = rows.length;
-    const sorted = rows.slice().sort((a, b) => b.w - a.w).slice(0, 500);
-    $('#tab').innerHTML = '<tr><th>Elemento</th><th>kg</th><th>X</th><th>Y</th><th>Z</th></tr>' +
-      sorted.map(r => `<tr title="${(r.cls || '').replace(/"/g, '')}"><td>${r.label}</td><td>${r.how === 'bolt' || r.how === 'none' ? '–' : nf(r.w, 1)}</td><td>${nf(r.c[0], 2)}</td><td>${nf(r.c[1], 2)}</td><td>${nf(r.c[2], 2)}</td></tr>`).join('') +
-      (rows.length > 500 ? `<tr><td colspan="5" class="muted">… altri ${rows.length - 500} elementi</td></tr>` : '');
-    setState(`Selezione: ${rows.length} elementi.`);
-    if (iconOn) mark();
+    const cog = W > 0 ? [0, 1, 2].map(k => rows.reduce((a, r) => a + r.w * r.c[k], 0) / W) : null;
+    const mn = ['x', 'y', 'z'].map(k => Math.min(...rows.map(r => r.min[k]))), mx = ['x', 'y', 'z'].map(k => Math.max(...rows.map(r => r.max[k])));
+    cur = {W, cog, n: rows.length, src, leaves, mn, mx,
+      nv: rows.filter(r => r.how === 'vol').length, nb: rows.filter(r => r.how === 'bolt').length, nn: rows.filter(r => r.how === 'none').length};
+    renderCur(); setState(`Selezione: ${rows.length} elementi.`);
+  }
+  function renderCur() {
+    if (!cur) return; const g = G();
+    $('#cur').hidden = false; $('#w').textContent = kgt(cur.W); $('#n').textContent = cur.n;
+    const r = cur.cog ? rel(g, cur.cog) : null;
+    $('#curKv').innerHTML = `<span></span><span class="h">rispetto all'origine del gruppo</span><span class="h">modello</span>` +
+      ['X', 'Y', 'Z'].map((k, i) => `<span class="l">COG ${k}</span><span class="v">${r ? nf(r[i], 3) : '–'}</span><span class="a">${cur.cog ? nf(cur.cog[i], 3) : '–'}</span>`).join('') +
+      `<span class="l">Ingombro</span><span class="v" style="grid-column:span 2">${nf(cur.mx[0] - cur.mn[0], 2)} × ${nf(cur.mx[1] - cur.mn[1], 2)} × ${nf(cur.mx[2] - cur.mn[2], 2)} m</span>`;
+    const m = []; if (cur.nv) m.push(`<span class="warn">${cur.nv} pesati da volume × densità</span>`); if (cur.nb) m.push(`${cur.nb} bulloni non conteggiati`); if (cur.nn) m.push(`<span class="warn">${cur.nn} senza peso né volume</span>`);
+    $('#src').innerHTML = m.join(' · ') || 'Tutti i pesi letti dalle proprietà del modello.';
+    $('#newName').placeholder = `COG ${g.cogs.length + 1}`;
+    $('#save').disabled = !cur.cog;
   }
 
-  async function mark() {
-    if (!last || !last.cog) return;
-    const p = {x: last.cog[0], y: last.cog[1], z: last.cog[2]};
-    try {
-      await api.viewer.removeIcon({id: 9471, iconPath: '', position: p, size: 0}).catch(() => {});
-      await api.viewer.addIcon({id: 9471, iconPath: new URL('cog.png', location.href).href, position: p, size: 32});
-      iconOn = true;
-    } catch (e) { setState('<span class="warn">Il visualizzatore non ha accettato il segno: ' + (e && e.message || e) + '</span>'); }
+  // ---------------- salvataggio baricentri
+  $('#save').onclick = async () => {
+    if (!cur || !cur.cog) return; const g = G();
+    const c = {id: store.nextIcon++, name: $('#newName').value.trim() || `COG ${g.cogs.length + 1}`, W: cur.W, cog: cur.cog, n: cur.n, mn: cur.mn, mx: cur.mx, src: cur.src, leaves: cur.leaves};
+    g.cogs.push(c); $('#newName').value = ''; save(); await drawIcons(); render();
+    setState(`Salvato "${esc(c.name)}" nel gruppo "${esc(g.name)}".`);
+  };
+  const iconUrl = g => new URL(`cog-${g.color % PAL.length}.png`, location.href).href;
+  async function drawIcons() {
+    try { await api.viewer.removeIcon(); } catch (e) {}
+    if (!showIcons) return;
+    const icons = [];
+    store.groups.forEach(g => g.cogs.forEach(c => icons.push({id: c.id, iconPath: iconUrl(g), position: {x: c.cog[0], y: c.cog[1], z: c.cog[2]}, size: 30})));
+    if (icons.length) { try { await api.viewer.addIcon(icons); } catch (e) { setState('<span class="warn">Il visualizzatore non ha accettato i segni: ' + esc(e && e.message || e) + '</span>'); } }
   }
-  $('#mark').onclick = mark;
-  $('#unmark').onclick = async () => { iconOn = false; try { await api.viewer.removeIcon(); } catch (e) {} };
+
+  // ---------------- evidenziazione
+  const selector = list => ({modelObjectIds: list.map(s => ({modelId: s.modelId, objectRuntimeIds: s.ids}))});
+  async function clearHighlight() {
+    try { await api.viewer.setObjectState(undefined, {color: 'reset'}); } catch (e) {}
+    hlCog = null;
+  }
+  async function highlight(cogs, color) {
+    await clearHighlight();
+    for (const c of cogs) { try { await api.viewer.setObjectState(selector(c.leaves), {color: PAL[color]}); } catch (e) {} }
+  }
+  async function focusCog(c, g) {
+    await highlight([c], g.color); hlCog = c.id; $('#showAll').setAttribute('aria-pressed', 'false');
+    try { await api.viewer.setSelection(selector(c.src), 'set'); } catch (e) {}
+    render();
+    const el = document.querySelector(`[data-c="${c.id}"]`); if (el) el.scrollIntoView({block: 'nearest'});
+  }
+  function onIconPicked(icons) {
+    const id = icons && icons[0] && icons[0].id; if (id == null) return;
+    for (let gi = 0; gi < store.groups.length; gi++) { const c = store.groups[gi].cogs.find(x => x.id === id); if (c) { store.active = gi; save(); focusCog(c, store.groups[gi]); return; } }
+  }
+  $('#clearHl').onclick = async () => { await clearHighlight(); $('#showAll').setAttribute('aria-pressed', 'false'); render(); };
+  $('#showAll').onclick = async e => {
+    const on = e.target.getAttribute('aria-pressed') !== 'true'; e.target.setAttribute('aria-pressed', on);
+    if (on) { const g = G(); await highlight(g.cogs, g.color); } else await clearHighlight();
+    render();
+  };
+  $('#icons').onclick = async e => { showIcons = !showIcons; e.target.setAttribute('aria-pressed', showIcons); await drawIcons(); };
+
+  // ---------------- origine
+  async function onPicked(d) {
+    if (!d || !d.position) return; const g = G(), p = d.position, mode = pickMode;
+    pickMode = null; $('#oPick').setAttribute('aria-pressed', 'false'); $('#axPick').setAttribute('aria-pressed', 'false');
+    try { await api.viewer.activateTool('reset'); } catch (e) {}
+    if (mode === 'origin') { g.origin = {x: p.x, y: p.y, z: p.z}; setState('Origine del gruppo impostata sul punto cliccato.'); }
+    else { g.rot = Math.round(Math.atan2(p.y - g.origin.y, p.x - g.origin.x) * 180 / Math.PI * 100) / 100; setState(`Asse X orientato a ${nf(g.rot, 2)}°.`); }
+    save(); render(); renderCur();
+  }
+  async function startPick(mode, btn) {
+    if (pickMode === mode) { pickMode = null; btn.setAttribute('aria-pressed', 'false'); try { await api.viewer.activateTool('reset'); } catch (e) {} return; }
+    pickMode = mode; $('#oPick').setAttribute('aria-pressed', mode === 'origin'); $('#axPick').setAttribute('aria-pressed', mode === 'axis');
+    try { await api.viewer.activateTool('picking'); } catch (e) {}
+    setState(mode === 'origin' ? 'Clicca nel modello il punto che diventa 0,0,0.' : 'Clicca nel modello un punto sull\'asse X positivo.');
+  }
+  $('#oPick').onclick = e => startPick('origin', e.target);
+  $('#axPick').onclick = e => startPick('axis', e.target);
+  $('#oZero').onclick = () => { const g = G(); g.origin = {x: 0, y: 0, z: 0}; g.rot = 0; save(); render(); renderCur(); };
+  $('#oCog').onchange = e => { const g = G(), c = g.cogs.find(x => String(x.id) === e.target.value); if (c) { g.origin = {x: c.cog[0], y: c.cog[1], z: c.cog[2]}; save(); render(); renderCur(); } e.target.value = ''; };
+  ['oX', 'oY', 'oZ'].forEach((k, i) => $('#' + k).onchange = e => { const g = G(); g.origin['xyz'[i]] = +e.target.value || 0; save(); render(); renderCur(); });
+  $('#oR').onchange = e => { G().rot = +e.target.value || 0; save(); render(); renderCur(); };
+
+  // ---------------- gruppi
+  $('#gNew').onclick = async () => { store.groups.push(newGroup(`Gruppo ${store.groups.length + 1}`, store.groups.length)); store.active = store.groups.length - 1; save(); await clearHighlight(); render(); renderCur(); };
+  $('#gSel').onchange = async e => { store.active = +e.target.value; save(); await clearHighlight(); $('#showAll').setAttribute('aria-pressed', 'false'); render(); renderCur(); };
+  $('#gName').onchange = e => { G().name = e.target.value || G().name; save(); render(); };
+  $('#gDel').onclick = async () => {
+    const g = G(); if (!confirmInline($('#gDel'), `Elimina "${g.name}" e i suoi ${g.cogs.length} baricentri?`)) return;
+    store.groups.splice(store.active, 1); if (!store.groups.length) store.groups.push(newGroup('Gruppo 1', 0)); store.active = 0;
+    save(); await clearHighlight(); await drawIcons(); render(); renderCur();
+  };
+  // conferma con un secondo clic (i dialoghi del browser possono essere bloccati dentro Trimble Connect)
+  function confirmInline(btn, msg) {
+    if (btn.dataset.armed === '1') { btn.dataset.armed = ''; btn.textContent = btn.dataset.label; return true; }
+    btn.dataset.label = btn.textContent; btn.dataset.armed = '1'; btn.textContent = 'Conferma eliminazione'; setState('<span class="warn">' + esc(msg) + ' Clicca di nuovo per confermare.</span>');
+    setTimeout(() => { if (btn.dataset.armed === '1') { btn.dataset.armed = ''; btn.textContent = btn.dataset.label; } }, 4000);
+    return false;
+  }
+
+  // ---------------- elenco
+  function render() {
+    const g = G();
+    $('#gSel').innerHTML = store.groups.map((x, i) => `<option value="${i}" ${x === g ? 'selected' : ''}>${esc(x.name)} (${x.cogs.length})</option>`).join('');
+    $('#gSw').style.setProperty('--c', PAL[g.color]); $('#gName').value = g.name;
+    $('#oX').value = g.origin.x.toFixed(3); $('#oY').value = g.origin.y.toFixed(3); $('#oZ').value = g.origin.z.toFixed(3); $('#oR').value = g.rot;
+    $('#oSum').textContent = g.origin.x || g.origin.y || g.origin.z || g.rot ? `(${nf(g.origin.x, 2)}; ${nf(g.origin.y, 2)}; ${nf(g.origin.z, 2)}${g.rot ? '; ' + nf(g.rot, 1) + '°' : ''})` : '(origine del modello)';
+    $('#oCog').innerHTML = '<option value="">Origine su un baricentro…</option>' + g.cogs.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    $('#cogList').innerHTML = g.cogs.map(c => { const r = rel(g, c.cog);
+      return `<div class="cog ${hlCog === c.id ? 'on' : ''}" data-c="${c.id}" style="--c:${PAL[g.color]}" title="Clic: evidenzia gli elementi che lo hanno generato">
+        <div class="t"><span class="sw"></span><input value="${esc(c.name)}" data-rn="${c.id}" aria-label="Nome baricentro"><b class="mono">${kgt(c.W)}</b><button class="sm x" data-del="${c.id}" aria-label="Elimina baricentro">×</button></div>
+        <div class="d"><span>${c.n} el.</span><span>X ${nf(r[0], 3)}</span><span>Y ${nf(r[1], 3)}</span><span>Z ${nf(r[2], 3)}</span></div></div>`; }).join('') ||
+      '<div class="note">Nessun baricentro in questo gruppo. Seleziona degli elementi nel modello e premi "+ Salva nel gruppo".</div>';
+    $('#cogList').querySelectorAll('.cog').forEach(el => el.onclick = ev => { if (ev.target.closest('input,button')) return; const c = g.cogs.find(x => x.id === +el.dataset.c); if (c) focusCog(c, g); });
+    $('#cogList').querySelectorAll('[data-rn]').forEach(el => el.onchange = () => { const c = g.cogs.find(x => x.id === +el.dataset.rn); c.name = el.value || c.name; save(); render(); });
+    $('#cogList').querySelectorAll('[data-del]').forEach(el => el.onclick = async () => {
+      if (!confirmInline(el, 'Elimina questo baricentro?')) return;
+      const i = g.cogs.findIndex(x => x.id === +el.dataset.del); const c = g.cogs[i]; g.cogs.splice(i, 1);
+      if (hlCog === c.id) await clearHighlight(); save(); await drawIcons(); render(); setState(`Baricentro "${esc(c.name)}" eliminato.`);
+    });
+    const W = g.cogs.reduce((a, c) => a + c.W, 0);
+    $('#gTot').textContent = g.cogs.length > 1 ? `Totale gruppo: ${kgt(W)}` : '';
+  }
   $('#copy').onclick = async () => {
-    if (!last) return;
-    const d = (v, k) => v.toFixed(k).replace('.', ',');
-    const L = [['Peso totale (kg)', d(last.W, 1)], ['COG X (m)', last.cog ? d(last.cog[0], 3) : ''], ['COG Y (m)', last.cog ? d(last.cog[1], 3) : ''], ['COG Z (m)', last.cog ? d(last.cog[2], 3) : ''], [], ['Elemento', 'Peso kg', 'X', 'Y', 'Z']];
-    last.rows.forEach(r => L.push([r.label, d(r.w, 1), d(r.c[0], 3), d(r.c[1], 3), d(r.c[2], 3)]));
+    const g = G(), d = (v, k) => v.toFixed(k).replace('.', ',');
+    const L = [[`Gruppo: ${g.name}`], [`Origine X0;Y0;Z0 (m)`, d(g.origin.x, 3), d(g.origin.y, 3), d(g.origin.z, 3), `Rotazione assi (°)`, d(g.rot, 2)], [],
+      ['Baricentro', 'Peso kg', 'X rel', 'Y rel', 'Z rel', 'X modello', 'Y modello', 'Z modello', 'Elementi']];
+    g.cogs.forEach(c => { const r = rel(g, c.cog); L.push([c.name, d(c.W, 1), d(r[0], 3), d(r[1], 3), d(r[2], 3), d(c.cog[0], 3), d(c.cog[1], 3), d(c.cog[2], 3), c.n]); });
     const txt = L.map(r => r.join('\t')).join('\n');
-    try { await navigator.clipboard.writeText(txt); setState('Risultati copiati: incollali in Excel.'); }
-    catch (e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); setState('Risultati copiati: incollali in Excel.'); }
+    try { await navigator.clipboard.writeText(txt); } catch (e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    setState('Tabella del gruppo copiata: incollala in Excel.');
   };
   $('#expand').onchange = update; $('#rho').onchange = update;
-  update();
+
+  render(); await drawIcons(); update();
 })();
 </script>
 </body>
