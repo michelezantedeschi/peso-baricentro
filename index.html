@@ -485,15 +485,20 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   const docOf = () => ({format: 'peso-baricentro', v: 1, saved: new Date().toISOString(), groups: store.groups, deleted: store.deleted});
   const norm = d => JSON.stringify({g: (d.groups || []).map(g => ({...g, cogs: g.cogs.slice().sort((a, b) => a.id - b.id)})).sort((a, b) => a.id - b.id), d: {g: [...(d.deleted || {}).g || []].sort(), c: [...(d.deleted || {}).c || []].sort()}});
   async function sharedUpload() {
-    const doc = docOf(), blob = new Blob([JSON.stringify(doc)], {type: 'application/json'});
-    let last;
-    for (const q of [`?parentId=${SH.folderId}&parentType=FOLDER`, `?parentId=${SH.folderId}`]) {
-      const fd = new FormData(); fd.append('file', blob, SHARED_FILE);
-      try { const r = await tcFetch('/files' + q, {method: 'POST', body: fd}); const j = await r.json().catch(() => ({}));
-        SH.fileId = j.id || SH.fileId; SH.ver = j.versionId || null; SH.last = JSON.parse(JSON.stringify(doc)); return; }
-      catch (e) { last = e; }
+    const doc = docOf(), bytes = new TextEncoder().encode(JSON.stringify(doc));
+    // caricamento in 3 passaggi (Package File Upload): avvio, invio del contenuto, attesa del completamento
+    const init = await (await tcFetch(`/files/fs/upload?parentId=${encodeURIComponent(SH.folderId)}&parentType=FOLDER`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: SHARED_FILE})})).json();
+    const url = init && init.contents && (init.contents.find(c => !c.format) || init.contents[0] || {}).url;
+    if (!url) throw new Error('caricamento: indirizzo di upload non ricevuto');
+    let put;
+    try { put = await fetch(url, {method: 'PUT', body: bytes.buffer}); } catch (e) { throw new Error('caricamento del contenuto: ' + (e.message || e)); }
+    if (!put.ok) throw new Error('caricamento del contenuto: HTTP ' + put.status);
+    let st = init;
+    for (let i = 0; i < 6 && st.status !== 'DONE'; i++) {
+      st = await (await tcFetch(`/files/fs/upload?uploadId=${encodeURIComponent(init.uploadId)}&wait=true`)).json();
+      if (st.status === 'ERROR' || st.status === 'EXPIRED') throw new Error('caricamento: ' + st.status + (st.errorReason ? ' ' + st.errorReason : ''));
     }
-    throw last;
+    SH.fileId = st.fileId || SH.fileId; SH.ver = st.versionId || null; SH.last = JSON.parse(JSON.stringify(doc));
   }
   const clone = o => JSON.parse(JSON.stringify(o));
   function merge(rd) {
