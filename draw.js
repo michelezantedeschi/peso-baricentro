@@ -326,6 +326,175 @@
   }
   function ascii(s) { return s.replace(/°/g, '%%d').replace(/[^\x20-\x7e%]/g, ch => ({'à': 'a', 'è': 'e', 'é': 'e', 'ì': 'i', 'ò': 'o', 'ù': 'u', '·': '-', '×': 'x', '₀': '0'}[ch] || '?')); }
 
-  const API = {IFC, toDxfMulti, initIfc, openIfc, meshOf, leaves, volCentroid, bboxOf, buildSheet, toPdf, toDxf, featureEdges, hiddenLine};
+
+  // ------------------------------------------------------------------ GOLFARI
+  /**
+   * Analizza un macroconcio per il posizionamento dei golfari.
+   * meshes: [{pos (relative a ref), idx, bolt}], cogR: baricentro relativo a ref.
+   * Restituisce un oggetto con travi rilevate, assi trasversali (diaframmi/irrigidimenti) e funzioni di calcolo.
+   */
+  function liftModel(meshes, cogR, opt = {}) {
+    const cell = opt.cell || 0.05;
+    // asse longitudinale (PCA in pianta)
+    let sxx = 0, syy = 0, sxy = 0, n = 0;
+    meshes.forEach(m => { const p = m.pos; for (let i = 0; i < p.length; i += 9) { const x = p[i] - cogR[0], y = p[i + 1] - cogR[1]; sxx += x * x; syy += y * y; sxy += x * y; n++; } });
+    const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy), ax = [Math.cos(ang), Math.sin(ang)], pv = [-ax[1], ax[0]];
+    const toUV = (x, y) => { const dx = x - cogR[0], dy = y - cogR[1]; return [dx * ax[0] + dy * ax[1], dx * pv[0] + dy * pv[1]]; };
+    const fromUV = (u, v) => [cogR[0] + u * ax[0] + v * pv[0], cogR[1] + u * ax[1] + v * pv[1]];
+    // elementi: ingombro locale e classe
+    const els = meshes.map((m, i) => {
+      const p = m.pos; let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+      for (let k = 0; k < p.length; k += 3) { const [u, v] = toUV(p[k], p[k + 1]); if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v; if (p[k + 2] < z0) z0 = p[k + 2]; if (p[k + 2] > z1) z1 = p[k + 2]; }
+      const small = m.bolt || (u1 - u0 < 0.25 && v1 - v0 < 0.25);
+      return {i, m, u0, u1, v0, v1, z0, z1, small, label: m.label || ''};
+    });
+    let U0 = Infinity, U1 = -Infinity, V0 = Infinity, V1 = -Infinity;
+    els.forEach(e => { if (e.small) return; U0 = Math.min(U0, e.u0); U1 = Math.max(U1, e.u1); V0 = Math.min(V0, e.v0); V1 = Math.max(V1, e.v1); });
+    const NU = Math.ceil((U1 - U0) / cell) + 2, NV = Math.ceil((V1 - V0) / cell) + 2;
+    const zt = new Float32Array(NU * NV).fill(-Infinity), owner = new Int32Array(NU * NV).fill(-1);
+    const gu = u => (u - U0) / cell, gv = v => (v - V0) / cell;
+    // mappa delle superfici superiori (facce rivolte verso l'alto), esclusi pioli e bulloni
+    els.forEach(e => {
+      if (e.small) return; const p = e.m.pos, ix = e.m.idx;
+      for (let t = 0; t < ix.length; t += 3) {
+        const a = ix[t] * 3, b = ix[t + 1] * 3, c = ix[t + 2] * 3;
+        const e1 = [p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]], e2 = [p[c] - p[a], p[c + 1] - p[a + 1], p[c + 2] - p[a + 2]];
+        const nz = e1[0] * e2[1] - e1[1] * e2[0], nl = Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], nz);
+        if (!nl || Math.abs(nz) / nl < 0.7) continue;
+        const A = toUV(p[a], p[a + 1]), B = toUV(p[b], p[b + 1]), C = toUV(p[c], p[c + 1]);
+        const x0 = gu(A[0]), y0 = gv(A[1]), x1 = gu(B[0]), y1 = gv(B[1]), x2 = gu(C[0]), y2 = gv(C[1]);
+        const area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0); if (Math.abs(area) < 1e-9) continue;
+        const za = p[a + 2], zb = p[b + 2], zc = p[c + 2];
+        for (let y = Math.max(0, Math.floor(Math.min(y0, y1, y2))); y <= Math.min(NV - 1, Math.ceil(Math.max(y0, y1, y2))); y++)
+          for (let x = Math.max(0, Math.floor(Math.min(x0, x1, x2))); x <= Math.min(NU - 1, Math.ceil(Math.max(x0, x1, x2))); x++) {
+            const w0 = ((x1 - x) * (y2 - y) - (x2 - x) * (y1 - y)) / area, w1 = ((x2 - x) * (y0 - y) - (x0 - x) * (y2 - y)) / area, w2 = 1 - w0 - w1;
+            if (w0 < -0.02 || w1 < -0.02 || w2 < -0.02) continue;
+            const z = w0 * za + w1 * zb + w2 * zc, k = x * NV + y; if (z > zt[k]) { zt[k] = z; owner[k] = e.i; }
+          }
+      }
+    });
+    // profilo trasversale a una progressiva u: tratti di piattabanda (superficie al livello superiore)
+    function strips(u) {
+      const xc = Math.round(gu(u)); if (xc < 0 || xc >= NU) return [];
+      // mediana su 5 colonne: elimina oggetti isolati (golfari esistenti, pioli)
+      const zrow = new Float32Array(NV), col = [];
+      for (let y = 0; y < NV; y++) { col.length = 0; for (let x = Math.max(0, xc - 2); x <= Math.min(NU - 1, xc + 2); x++) col.push(zt[x * NV + y]); col.sort((a, b) => a - b); zrow[y] = col[Math.floor(col.length / 2)]; }
+      // tratti piani (quota quasi costante)
+      const runs = []; let s = 0;
+      for (let y = 1; y <= NV; y++) {
+        const brk = y === NV || !isFinite(zrow[y]) !== !isFinite(zrow[s]) || (isFinite(zrow[y]) && Math.abs(zrow[y] - zrow[y - 1]) > 0.02);
+        if (brk) { const e = y - 1; let zm = -Infinity; for (let k = s; k <= e; k++) zm = Math.max(zm, zrow[k]); runs.push({s, e, z: zm}); s = y; }
+      }
+      // unisce tratti alla stessa quota separati da piccole interruzioni (piatti verticali sottili)
+      const fin = runs.filter(r => isFinite(r.z));
+      const merged = [];
+      fin.forEach(r => { const l = merged[merged.length - 1]; if (l && r.s - l.e <= 3 && Math.abs(r.z - l.z) < 0.03) { l.e = r.e; l.z = Math.max(l.z, r.z); } else merged.push({...r}); });
+      // piattabanda: tratto piano più alto di quanto c'è ai lati, largo 0.15-1.6 m
+      const out = [];
+      merged.forEach((r, i) => {
+        const w = (r.e - r.s + 1) * cell; if (w < 0.15 || w > 1.6) return;
+        let left = -Infinity, right = -Infinity;
+        for (let k = Math.max(0, r.s - 6); k < r.s; k++) if (isFinite(zrow[k])) left = Math.max(left, zrow[k]);
+        for (let k = r.e + 1; k <= Math.min(NV - 1, r.e + 6); k++) if (isFinite(zrow[k])) right = Math.max(right, zrow[k]);
+        if (left > r.z - 0.08 || right > r.z - 0.08) return;
+        out.push({v: V0 + ((r.s + r.e) / 2) * cell, w, z: r.z});
+      });
+      return out;
+    }
+    const g0 = strips(0);
+    // traccia la linea di ogni trave lungo u (travi curve: si segue la piattabanda passo passo)
+    const track = g0.map(st => { const m = new Map(); m.set(0, st); return m; });
+    function girderAt(gi, u) {
+      const step = 0.5, key = Math.round(u / step); const m = track[gi];
+      if (m.has(key)) return m.get(key);
+      const dir = key > 0 ? 1 : -1; let k = 0, prev = m.get(0);
+      while (k !== key) { k += dir; if (m.has(k)) { prev = m.get(k); continue; }
+        const ss = strips(k * step); let best = null; ss.forEach(s => { if (!best || Math.abs(s.v - prev.v) < Math.abs(best.v - prev.v)) best = s; });
+        const cur = best && Math.abs(best.v - prev.v) < 0.6 ? best : {v: prev.v, w: prev.w, z: prev.z, missing: true};
+        m.set(k, cur); prev = cur; }
+      return m.get(key);
+    }
+    // assi trasversali: elementi sottili in senso longitudinale e alti (diaframmi, irrigidimenti, fazzoletti dei traversi)
+    const stations = g0.map(() => []);
+    els.forEach(e => {
+      if (e.small || e.u1 - e.u0 > 0.15 || e.z1 - e.z0 < 0.3) return;
+      const uc = (e.u0 + e.u1) / 2;
+      g0.forEach((_, gi) => { const g = girderAt(gi, uc); if (e.v1 > g.v - g.w / 2 - 0.3 && e.v0 < g.v + g.w / 2 + 0.3) stations[gi].push({u: uc, el: e.i}); });
+    });
+    stations.forEach((arr, gi) => { arr.sort((a, b) => a.u - b.u); const merged = [];
+      arr.forEach(s => { const l = merged[merged.length - 1]; if (l && s.u - l.u < 0.08) { l.u = (l.u * l.n + s.u) / (l.n + 1); l.n++; } else merged.push({u: s.u, n: 1, el: s.el}); });
+      stations[gi] = merged; });
+    // punto sulla piattabanda della trave gi alla progressiva u, con verifica dell'appoggio
+    function pointAt(gi, u, lugL = 0.55, lugW = 0.15) {
+      const g = girderAt(gi, u); const v = g.v;
+      let tot = 0, ok = 0, zsum = 0, own = new Map();
+      for (let du = -lugL / 2; du <= lugL / 2 + 1e-9; du += cell) for (let dv = -lugW / 2; dv <= lugW / 2 + 1e-9; dv += cell) {
+        const x = Math.round(gu(u + du)), y = Math.round(gv(v + dv)); tot++;
+        if (x < 0 || y < 0 || x >= NU || y >= NV) continue; const z = zt[x * NV + y];
+        if (z > g.z - 0.06) { ok++; zsum += z; const o = owner[x * NV + y]; own.set(o, (own.get(o) || 0) + 1); }
+      }
+      let main = -1, mc = 0; own.forEach((c, o) => { if (c > mc) { mc = c; main = o; } });
+      const z = ok ? zsum / ok : g.z;
+      // pioli/bulloni nell'impronta del golfare
+      let studs = 0;
+      els.forEach(e => { if (!e.small) return; const uc = (e.u0 + e.u1) / 2, vc = (e.v0 + e.v1) / 2;
+        if (Math.abs(uc - u) < lugL / 2 + 0.03 && Math.abs(vc - v) < lugW / 2 + 0.06 && e.z1 > z - 0.02 && e.z0 < z + 0.4) studs++; });
+      const xy = fromUV(u, v);
+      return {gi, u, v, x: xy[0], y: xy[1], z, d: Math.hypot(u, v), support: tot ? ok / tot : 0, el: main >= 0 ? els[main].m : null, studs, missing: !!g.missing};
+    }
+    const L = U1 - U0;
+    return {ax, pv, girders: g0, stations, pointAt, girderAt, strips, length: L, umin: U0, umax: U1, cell, _dbg: {zt, NU, NV, U0, V0, els}};
+  }
+
+  /** propone i golfari: n = 2 o 4; girders = indici delle travi; R = distanza imposta (null = automatico sugli assi) */
+  function placeLugs(lm, cfg) {
+    const n = cfg.n, gs = cfg.girders, target = cfg.target || lm.length / 6, axial = cfg.metric !== 'radial';
+    const metric = (u, v) => axial ? Math.abs(u) : Math.hypot(u, v);
+    const sides = [-1, 1], slots = []; gs.forEach(g => sides.forEach(s => slots.push({g, s})));
+    if (cfg.R) { // distanza imposta: si risolve la progressiva che dà quella distanza dal baricentro
+      const pts = slots.map(({g, s}) => { if (axial) return lm.pointAt(g, s * cfg.R, cfg.lugL, cfg.lugW);
+        let lo = 0, hi = s > 0 ? lm.umax : -lm.umin;
+        for (let k = 0; k < 40; k++) { const mid = (lo + hi) / 2, p = lm.pointAt(g, s * mid); if (p.d < cfg.R) lo = mid; else hi = mid; }
+        return lm.pointAt(g, s * (lo + hi) / 2, cfg.lugL, cfg.lugW); });
+      return {mode: 'manuale', R: cfg.R, points: pts, alternatives: []};
+    }
+    // automatico: per ogni raggio candidato si sceglie l'asse più vicino per ogni trave e lato
+    const cand = new Set(); const dists = slots.map(({g, s}) => lm.stations[g].filter(st => st.u * s > 0.5).map(st => ({u: st.u, d: metric(st.u, lm.girderAt(g, st.u).v)})));
+    dists.forEach(arr => arr.forEach(x => cand.add(Math.round(x.d * 1000) / 1000)));
+    const combos = [];
+    cand.forEach(R => {
+      if (dists.some(a => !a.length)) return;
+      const pick = dists.map(a => a.reduce((b, x) => Math.abs(x.d - R) < Math.abs(b.d - R) ? x : b));
+      const ds = pick.map(p => p.d), dev = Math.max(...ds) - Math.min(...ds), mean = ds.reduce((a, b) => a + b, 0) / ds.length;
+      const key = pick.map(p => p.u.toFixed(2)).join('|'); if (combos.some(c => c.key === key)) return;
+      combos.push({key, pick, dev, mean});
+    });
+    // costo: vicinanza alla distanza obiettivo, scarto fra i golfari oltre 5 cm, appoggio incompleto, pioli/bulloni nell'impronta
+    combos.forEach(c => {
+      const pts = c.pick.map((p, i) => lm.pointAt(slots[i].g, p.u, cfg.lugL, cfg.lugW));
+      const bad = pts.some(p => p.support < 0.9), studs = pts.reduce((a, p) => a + p.studs, 0);
+      c.cost = 2 * Math.abs(c.mean - target) / Math.max(target, 1) + 8 * Math.max(0, c.dev - 0.05) + (bad ? 5 : 0) + (studs ? 1 : 0);
+    });
+    combos.sort((a, b) => a.cost - b.cost);
+    const top = combos.slice(0, 8).map(c => ({dev: c.dev, mean: c.mean, us: c.pick.map(p => p.u)}));
+    const best = top[cfg.alt || 0];
+    if (!best) return {mode: 'auto', points: [], alternatives: [], error: 'nessun asse di diaframma o irrigidimento trovato sui due lati del baricentro'};
+    return {mode: 'auto', R: best.mean, dev: best.dev, points: slots.map((sl, i) => lm.pointAt(sl.g, best.us[i])), alternatives: top};
+  }
+
+  /** carichi e funi: P per golfare (ripartizione statica), lunghezza, angolo, tiro */
+  function slingForces(points, W, hookZ) {
+    const n = points.length; let P;
+    if (n === 2) { const [a, b] = points; const da = Math.abs(a.u), db = Math.abs(b.u); P = [W * db / (da + db), W * da / (da + db)]; }
+    else { // due travi x due lati: ripartizione bilineare (trasversale poi longitudinale)
+      const byG = {}; points.forEach((p, i) => (byG[p.gi] ||= []).push(i)); const G = Object.keys(byG);
+      const vA = Math.abs(points[byG[G[0]][0]].v), vB = Math.abs(points[byG[G[1]][0]].v);
+      const WA = W * vB / (vA + vB), WB = W * vA / (vA + vB); P = new Array(n);
+      [[G[0], WA], [G[1], WB]].forEach(([g, Wg]) => { const [i, j] = byG[g]; const di = Math.abs(points[i].u), dj = Math.abs(points[j].u); P[i] = Wg * dj / (di + dj); P[j] = Wg * di / (di + dj); });
+    }
+    return points.map((p, i) => { const h = hookZ - p.z, Ls = Math.hypot(p.d, h), alpha = Math.atan2(h, p.d) * 180 / Math.PI; return {P: P[i], Ls, alpha, T: P[i] / Math.sin(alpha * Math.PI / 180)}; });
+  }
+
+  const API = {liftModel, placeLugs, slingForces, IFC, toDxfMulti, initIfc, openIfc, meshOf, leaves, volCentroid, bboxOf, buildSheet, toPdf, toDxf, featureEdges, hiddenLine};
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.PBDraw = API;
 })(typeof window !== 'undefined' ? window : globalThis);

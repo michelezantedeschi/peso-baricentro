@@ -47,6 +47,12 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
 .cog .d span{text-align:right} .cog .d span:first-child{text-align:left;color:var(--muted)}
 .sw{width:11px;height:11px;border-radius:50%;display:inline-block;background:var(--c);flex:none}
 #state{font-size:12px}
+table.lt{border-collapse:collapse;width:100%;font-size:11px}
+table.lt th{text-align:right;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:2px 3px;white-space:nowrap}
+table.lt th:first-child,table.lt td:first-child{text-align:left}
+table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:4px}
+.ok{color:var(--ok)}
 #sync{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:11.5px;line-height:1.35;padding:5px 7px;border-radius:4px;background:var(--soft);color:var(--muted)}
 #sync.err{background:#fdf3e4;color:var(--warn)}
 #sync .msg{flex:1 1 160px;min-width:0}
@@ -107,6 +113,27 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   <div class="note" id="gTot"></div>
 </section>
 
+<section class="box" id="lugBox" hidden>
+  <div class="row"><h2 class="grow">Golfari · <span id="lugName"></span></h2><button class="sm" id="lugClose">Chiudi</button></div>
+  <div id="lugState" class="note"></div>
+  <div id="lugForm" hidden style="display:flex;flex-direction:column;gap:7px">
+    <div class="g3">
+      <label class="f">Numero<select id="lugN"><option value="4">4 golfari</option><option value="2">2 golfari</option></select></label>
+      <label class="f">Peso di calcolo (t)<input type="number" id="lugW" step="0.1"></label>
+      <label class="f">Gancio sopra golfari (m)<input type="number" id="lugH" step="0.1"></label>
+    </div>
+    <label class="f">Equidistanza dal baricentro<select id="lugMetric"><option value="axial">lungo l'asse del concio (golfari simmetrici, carichi uguali)</option><option value="radial">in pianta, dal baricentro (funi della stessa lunghezza)</option></select></label>
+    <div><div class="note">Travi su cui posare i golfari (piattabanda in asse all'anima):</div><div id="lugGirders" class="row"></div></div>
+    <label class="row"><input type="radio" name="lugMode" value="auto" checked> Sugli assi di diaframmi/irrigidimenti <select id="lugAlt" class="grow" aria-label="Soluzione proposta"></select></label>
+    <label class="row"><input type="radio" name="lugMode" value="man"> Distanza imposta dal baricentro <input type="number" id="lugR" step="0.05" style="width:90px"> m</label>
+    <details><summary class="note">Impronta del golfare</summary><div class="g3" style="margin-top:4px"><label class="f">Lunghezza (m)<input type="number" id="lugL" value="0.55" step="0.01"></label><label class="f">Larghezza (m)<input type="number" id="lugWd" value="0.15" step="0.01"></label></div></details>
+    <div id="lugSum" class="note"></div>
+    <div class="tw"><table class="lt" id="lugTab"></table></div>
+    <div class="row"><button class="sm pri" id="lugSave">Salva nel baricentro</button><button class="sm" id="lugCopy">Copia tabella</button></div>
+    <div class="note">Distanze in pianta dal baricentro. Carichi con ripartizione statica: per 4 golfari, prima fra le due travi e poi fra i due lati di ogni trave. Il tiro è il carico diviso per il seno dell'angolo della fune. Valori indicativi da verificare.</div>
+  </div>
+</section>
+
 <section class="box" id="exp" hidden>
   <h2>Esportazione</h2>
   <div id="expState" class="note"></div>
@@ -121,7 +148,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   <label class="row"><input type="checkbox" id="boltD"> Disegna i bulloni nelle tavole</label>
   <label class="row">Densità per elementi senza peso <input type="number" id="rho" value="7850" step="10" style="width:80px"> kg/m³</label>
   <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"); se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con travi, lamiere e piatti l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati. Gruppi e baricentri sono condivisi nel progetto (PesoBaricentro/baricentri.json).</div>
-  <div class="note">Versione 6 · 20/11/2026</div>
+  <div class="note">Versione 7 · 20/11/2026</div>
 </details>
 
 <script src="tcwapi.js"></script>
@@ -136,7 +163,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   const kgt = W => W >= 1000 ? nf(W / 1000, 2) + ' t' : nf(W, 1) + ' kg';
   const setState = (t, busy) => { $('#state').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
-  const PB_VERSION = '6 (20/11/2026)';
+  const PB_VERSION = '7 (20/11/2026)';
   let tokenWaiter = null;
   let api, cur = null, runId = 0, timer = null, pickMode = null, hlCog = null, showIcons = true, store;
 
@@ -312,6 +339,11 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     if (!showIcons) return;
     const icons = [];
     store.groups.forEach(g => g.cogs.forEach(c => icons.push({id: c.id, iconPath: iconUrl(g), position: {x: c.cog[0], y: c.cog[1], z: c.cog[2]}, size: 30})));
+    const lugUrl = new URL('lug.png?v=1', location.href).href;
+    store.groups.forEach(g => g.cogs.forEach(c => {
+      const pts = (LUG && LUG.c === c && LUG.preview) ? LUG.preview : (c.lugs ? c.lugs.points : []);
+      pts.forEach((p, k) => icons.push({id: c.id * 10 + k + 1, iconPath: lugUrl, position: {x: p.x, y: p.y, z: p.z + 0.15}, size: 26}));
+    }));
     try { localStorage.setItem(KEY + ':icons', JSON.stringify(icons.map(i => i.id))); } catch (e) {}
     if (icons.length) { try { await api.viewer.addIcon(icons); drawn = icons; } catch (e) { setState('<span class="warn">Il visualizzatore non ha accettato i segni: ' + esc(e && e.message || e) + '</span>'); } }
   }
@@ -319,7 +351,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   async function purgeStale() {
     let ids = []; try { ids = JSON.parse(localStorage.getItem(KEY + ':icons')) || []; } catch (e) {}
     for (let id = 1000; id < (store.nextIcon || 1000) + 5; id++) ids.push(id);
-    store.groups.forEach(g => g.cogs.forEach(c => ids.push(c.id)));
+    store.groups.forEach(g => g.cogs.forEach(c => { ids.push(c.id); for (let k = 1; k <= 4; k++) ids.push(c.id * 10 + k); }));
     const stale = [...new Set(ids)].map(id => ({id, iconPath: '', position: {x: 0, y: 0, z: 0}, size: 0}));
     await removeIcons(stale);
   }
@@ -415,12 +447,14 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     $('#oCog').innerHTML = '<option value="">Origine su un baricentro…</option>' + g.cogs.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
     $('#cogList').innerHTML = g.cogs.map(c => { const r = rel(g, c.cog);
       return `<div class="cog ${hlCog === c.id ? 'on' : ''}" data-c="${c.id}" style="--c:${PAL[g.color]}" title="Clic: evidenzia gli elementi che lo hanno generato">
-        <div class="t"><span class="sw"></span><input value="${esc(c.name)}" data-rn="${c.id}" aria-label="Nome baricentro"><b class="mono">${kgt(c.W)}</b><button class="sm" data-pdf="${c.id}" title="Tavola PDF">PDF</button><button class="sm" data-dxf="${c.id}" title="Tavola DXF">DXF</button><button class="sm x" data-del="${c.id}" aria-label="Elimina baricentro">×</button></div>
+        <div class="t"><span class="sw"></span><input value="${esc(c.name)}" data-rn="${c.id}" aria-label="Nome baricentro"><b class="mono">${kgt(c.W)}</b><button class="sm" data-lug="${c.id}" title="Golfari di sollevamento">Golfari</button><button class="sm" data-pdf="${c.id}" title="Tavola PDF">PDF</button><button class="sm" data-dxf="${c.id}" title="Tavola DXF">DXF</button><button class="sm x" data-del="${c.id}" aria-label="Elimina baricentro">×</button></div>
         <div class="d"><span>${c.n} el.</span><span>X ${nf(r[0], 3)}</span><span>Y ${nf(r[1], 3)}</span><span>Z ${nf(r[2], 3)}</span></div>
+        ${c.lugs ? `<div class="note">Golfari: ${c.lugs.n} a ${nf(c.lugs.R, 2)} m dal baricentro · tiro max ${nf(Math.max(...c.lugs.points.map(p => p.T)), 1)} t</div>` : ''}
         <div class="row"><button class="sm" data-add="${c.id}" title="Aggiunge a questo baricentro gli elementi selezionati ora nel modello" ${cur ? '' : 'disabled'}>+ Aggiungi selezione</button><button class="sm" data-rem="${c.id}" title="Toglie da questo baricentro gli elementi selezionati ora nel modello" ${cur ? '' : 'disabled'}>− Togli selezione</button></div></div>`; }).join('') ||
       '<div class="note">Nessun baricentro in questo gruppo. Seleziona degli elementi nel modello e premi "+ Salva nel gruppo".</div>';
     $('#cogList').querySelectorAll('.cog').forEach(el => el.onclick = ev => { if (ev.target.closest('input,button')) return; const c = g.cogs.find(x => x.id === +el.dataset.c); if (c) focusCog(c, g); });
     $('#cogList').querySelectorAll('[data-rn]').forEach(el => el.onchange = () => { const c = g.cogs.find(x => x.id === +el.dataset.rn); c.name = el.value || c.name; save(); render(); });
+    $('#cogList').querySelectorAll('[data-lug]').forEach(el => el.onclick = () => openLugs(g.cogs.find(x => x.id === +el.dataset.lug), g));
     $('#cogList').querySelectorAll('[data-add]').forEach(el => el.onclick = () => editCog(g.cogs.find(x => x.id === +el.dataset.add), g, 'add'));
     $('#cogList').querySelectorAll('[data-rem]').forEach(el => el.onclick = () => editCog(g.cogs.find(x => x.id === +el.dataset.rem), g, 'rem'));
     $('#cogList').querySelectorAll('[data-pdf]').forEach(el => el.onclick = () => exportCogs([g.cogs.find(x => x.id === +el.dataset.pdf)], g, 'pdf'));
@@ -642,39 +676,141 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     row.innerHTML = `Pronto: <a href="${url}" download="${esc(name)}" target="_blank" rel="noopener">${esc(name)}</a>`;
     $('#files').prepend(row);
   }
+  /** geometria IFC di un baricentro salvato, allineata alle coordinate del visualizzatore */
+  async function cogGeometry(c) {
+    const parts = await partsOf(c);
+    if (!parts || !parts.length) throw new Error(`"${c.name}": non trovo gli identificativi dei pezzi`);
+    const items = []; let ref = null, missing = 0;
+    for (const part of parts) {
+      const M = await getModel(part.m);
+      const eid = M.m.g2e.get(part.g); if (eid == null) { missing++; continue; }
+      if (!M.m.ref) M.m.ref = c.cog.map(v => Math.round(v));
+      if (!ref) ref = M.m.ref;
+      const lv = PBDraw.leaves(M.m, eid, new Set());
+      for (const e of lv) { const ms = PBDraw.meshOf(M.m, e, ref); if (ms.idx.length) items.push({ms, part, n: lv.size}); }
+    }
+    if (!items.length) throw new Error(`"${c.name}": i pezzi non si trovano nel file IFC. È lo stesso modello aperto nel visualizzatore?`);
+    const bb = PBDraw.bboxOf(items.map(i => i.ms));
+    const o1 = [0, 1, 2].map(i => c.mn[i] - (bb.mn[i] + ref[i])), o2 = [0, 1, 2].map(i => c.mx[i] - (bb.mx[i] + ref[i]));
+    const off = [0, 1, 2].map(i => (o1[i] + o2[i]) / 2), mism = Math.max(...[0, 1, 2].map(i => Math.abs(o1[i] - o2[i])));
+    const ref2 = ref.map((v, i) => v + off[i]);
+    const rho = +$('#rho').value; let W = 0, Wb = 0; const C = [0, 0, 0];
+    for (const it of items) {
+      const vc = PBDraw.volCentroid(it.ms); let w;
+      if (it.part.how === 'bolt' || it.ms.bolt) { if (!$('#boltW').checked) continue; w = vc.V * rho; Wb += w; }
+      else w = it.part.w > 0 ? it.part.w / it.n : vc.V * rho;
+      W += w; for (let d = 0; d < 3; d++) C[d] += w * vc.c[d];
+    }
+    const cogR = C.map(v => v / W);
+    return {items, ref2, cogR, cog: cogR.map((v, i) => v + ref2[i]), W, Wb, missing, mism};
+  }
+  // ================= golfari =================
+  let LUG = null;
+  const lugMsg = (t, busy) => { $('#lugState').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
+  async function openLugs(c, g) {
+    if (!c) return;
+    LUG = null; $('#lugBox').hidden = false; $('#lugForm').hidden = true; $('#lugName').textContent = c.name;
+    $('#lugBox').scrollIntoView({block: 'start', behavior: 'smooth'});
+    lugMsg('Lettura della geometria del macroconcio…', true);
+    try {
+      const geo = await cogGeometry(c);
+      lugMsg('Ricerca di piattabande e diaframmi…', true); await tick();
+      const lm = PBDraw.liftModel(geo.items.map(i => i.ms), geo.cogR, {});
+      if (!lm.girders.length) throw new Error('nessuna piattabanda riconosciuta in corrispondenza del baricentro');
+      LUG = {c, g, geo, lm};
+      const sv = c.lugs || {};
+      $('#lugN').value = String(sv.n || (lm.girders.length > 1 ? 4 : 2)); $('#lugMetric').value = sv.metric || 'axial';
+      $('#lugW').value = (sv.W || geo.W / 1000).toFixed(1);
+      $('#lugH').value = sv.H ? sv.H.toFixed(1) : '';
+      document.querySelector(`input[name=lugMode][value=${sv.mode === 'manuale' ? 'man' : 'auto'}]`).checked = true;
+      $('#lugR').value = sv.R ? sv.R.toFixed(2) : '';
+      LUG.alt = sv.alt || 0;
+      renderGirders(sv.girders);
+      $('#lugForm').hidden = false;
+      lugMsg(`Trovate ${lm.girders.length} piattabande e ${lm.stations.reduce((a, s) => a + s.length, 0)} assi di diaframmi/irrigidimenti. Macroconcio lungo ${nf(lm.length, 2)} m.` + (geo.mism > 0.05 ? ' <span class="warn">Coordinate IFC e visualizzatore non perfettamente allineate.</span>' : ''));
+      computeLugs();
+    } catch (e) { lugMsg('<span class="ko">Non riesco a preparare i golfari: ' + esc(e && e.message || e) + '</span>'); }
+  }
+  function girderOrder() { return LUG.lm.girders.map((gd, i) => ({i, v: gd.v})).sort((a, b) => b.v - a.v); }
+  function renderGirders(sel) {
+    const n = +$('#lugN').value, ord = girderOrder();
+    let def = sel && sel.length === n / 2 ? sel : (n === 4 ? [ord[0].i, ord[ord.length - 1].i] : [ord.reduce((a, b) => Math.abs(b.v) < Math.abs(a.v) ? b : a).i]);
+    $('#lugGirders').innerHTML = ord.map((o, k) => `<label><input type="checkbox" data-gi="${o.i}" ${def.includes(o.i) ? 'checked' : ''}> Trave ${k + 1} <span class="muted">(${o.v >= 0 ? 'sin.' : 'des.'} ${nf(Math.abs(o.v), 2)} m)</span></label>`).join('');
+    $('#lugGirders').querySelectorAll('input').forEach(el => el.onchange = computeLugs);
+  }
+  function computeLugs() {
+    if (!LUG) return; const {lm, geo, c, g} = LUG;
+    const n = +$('#lugN').value, gs = [...$('#lugGirders').querySelectorAll('input:checked')].map(el => +el.dataset.gi);
+    const need = n / 2;
+    if (gs.length !== need) { $('#lugSum').innerHTML = `<span class="warn">Per ${n} golfari scegli ${need === 1 ? 'una trave' : 'due travi'}.</span>`; $('#lugTab').innerHTML = ''; LUG.res = null; LUG.preview = null; drawIcons(); return; }
+    const man = document.querySelector('input[name=lugMode]:checked').value === 'man';
+    const cfg = {n, girders: gs, alt: LUG.alt || 0, metric: $('#lugMetric').value, lugL: +$('#lugL').value || 0.55, lugW: +$('#lugWd').value || 0.15}; if (man) cfg.R = +$('#lugR').value || 0;
+    if (man && !(cfg.R > 0.5)) { $('#lugSum').innerHTML = '<span class="warn">Scrivi la distanza dal baricentro.</span>'; return; }
+    const r = PBDraw.placeLugs(lm, cfg);
+    if (r.error || !r.points.length) { $('#lugSum').innerHTML = '<span class="ko">' + esc(r.error || 'nessuna soluzione') + '</span>'; $('#lugTab').innerHTML = ''; return; }
+    if (!man) {
+      $('#lugAlt').innerHTML = r.alternatives.map((a, i) => `<option value="${i}" ${i === (LUG.alt || 0) ? 'selected' : ''}>${nf(a.mean, 2)} m dal baricentro · scarto ${nf(a.dev * 1000, 0)} mm</option>`).join('');
+      $('#lugR').value = r.R.toFixed(2);
+    }
+    const lugL = +$('#lugL').value || 0.55, lugWd = +$('#lugWd').value || 0.15;
+    const pts = r.points.map(p => lm.pointAt(p.gi, p.u, lugL, lugWd));
+    const axial = $('#lugMetric').value !== 'radial';
+    const ds = pts.map(p => axial ? Math.abs(p.u) : p.d), dmax = Math.max(...ds), dmin = Math.min(...ds);
+    const dRad = Math.max(...pts.map(p => p.d));
+    let H = +$('#lugH').value; if (!(H > 0)) { H = Math.round(dRad * Math.tan(Math.PI / 3) * 10) / 10; $('#lugH').value = H.toFixed(1); }
+    const zTop = Math.max(...pts.map(p => p.z)), hookZ = zTop + H;
+    const W = +$('#lugW').value || geo.W / 1000;
+    const f = PBDraw.slingForces(pts, W, hookZ);
+    const ord = girderOrder(), gName = gi => 'T' + (ord.findIndex(o => o.i === gi) + 1);
+    const ref = geo.ref2;
+    const rows = pts.map((p, k) => {
+      const ax = {x: p.x + ref[0], y: p.y + ref[1], z: p.z + ref[2]}, rl = rel(g, [ax.x, ax.y, ax.z]);
+      const st = lm.stations[p.gi]; const near = st.length ? Math.min(...st.map(s => Math.abs(s.u - p.u))) : null;
+      return {k: k + 1, g: gName(p.gi), gi: p.gi, d: p.d, u: p.u, ...ax, rl, support: p.support, studs: p.studs, near, ...f[k]};
+    });
+    LUG.res = {mode: r.mode, R: (dmax + dmin) / 2, dev: dmax - dmin, rows, hook: [geo.cog[0], geo.cog[1], hookZ + ref[2]], H, W, n, gs, lugL, lugWd};
+    LUG.preview = rows.map(rw => ({x: rw.x, y: rw.y, z: rw.z}));
+    const warn = [];
+    if (rows.some(x => x.support < 0.9)) warn.push('<span class="ko">un golfare non appoggia completamente sulla piattabanda</span>');
+    if (rows.some(x => x.studs > 0)) warn.push('<span class="warn">pioli o bulloni nell\'impronta di un golfare</span>');
+    if (rows.some(x => x.alpha < 45)) warn.push('<span class="warn">fune con angolo inferiore a 45°: alza il gancio</span>');
+    if (man && rows.some(x => x.near > 0.15)) warn.push('<span class="warn">un golfare non è in asse a un diaframma o irrigidimento</span>');
+    $('#lugSum').innerHTML = `${axial ? 'Distanza lungo l\'asse' : 'Distanza in pianta'} dal baricentro ${nf(LUG.res.R, 3)} m · scarto fra i golfari <b>${nf(LUG.res.dev * 1000, 0)} mm</b> · gancio a quota ${nf(hookZ + ref[2], 2)} m` + (warn.length ? '<br>' + warn.join(' · ') : ' · <span class="ok">✓ tutti i golfari appoggiano sulla piattabanda</span>');
+    $('#lugTab').innerHTML = '<tr><th>Golf.</th><th>Trave</th><th>Asse m</th><th>Pianta m</th><th>Carico t</th><th>Tiro t</th><th>Fune °</th><th>Appoggio</th><th>Da asse</th><th>Fune m</th><th>X gruppo</th><th>Y gruppo</th><th>Z</th></tr>' +
+      rows.map(x => `<tr><td>G${x.k}</td><td>${x.g}</td><td>${nf(Math.abs(x.u), 3)}</td><td>${nf(x.d, 3)}</td><td>${nf(x.P, 1)}</td><td><b>${nf(x.T, 1)}</b></td><td class="${x.alpha < 45 ? 'warn' : ''}">${nf(x.alpha, 1)}</td><td class="${x.support >= 0.9 ? 'ok' : 'ko'}">${nf(x.support * 100, 0)}%${x.studs ? ' · ' + x.studs + ' p.' : ''}</td><td>${x.near == null ? '–' : nf(x.near * 1000, 0) + ' mm'}</td><td>${nf(x.Ls, 2)}</td><td>${nf(x.rl[0], 3)}</td><td>${nf(x.rl[1], 3)}</td><td>${nf(x.z, 3)}</td></tr>`).join('');
+    drawIcons();
+  }
+  $('#lugMetric').onchange = () => { if (LUG) LUG.alt = 0; computeLugs(); };
+  ['#lugN'].forEach(k => $(k).onchange = () => { renderGirders(); LUG && (LUG.alt = 0); computeLugs(); });
+  ['#lugW', '#lugH', '#lugR', '#lugL', '#lugWd'].forEach(k => $(k).onchange = () => { if (k === '#lugR') document.querySelector('input[name=lugMode][value=man]').checked = true; computeLugs(); });
+  $('#lugAlt').onchange = e => { if (LUG) { LUG.alt = +e.target.value; document.querySelector('input[name=lugMode][value=auto]').checked = true; computeLugs(); } };
+  document.querySelectorAll('input[name=lugMode]').forEach(el => el.onchange = () => { if (LUG && el.value === 'auto') LUG.alt = +$('#lugAlt').value || 0; computeLugs(); });
+  $('#lugClose').onclick = () => { $('#lugBox').hidden = true; LUG = null; drawIcons(); };
+  $('#lugSave').onclick = async () => {
+    if (!LUG || !LUG.res) return; const {c, res} = LUG;
+    c.lugs = {metric: $('#lugMetric').value, n: res.n, girders: res.gs, mode: res.mode, alt: LUG.alt || 0, R: res.R, dev: res.dev, H: res.H, W: res.W, lugL: res.lugL, lugWd: res.lugWd, hook: res.hook,
+      points: res.rows.map(x => ({x: x.x, y: x.y, z: x.z, d: x.d, g: x.g, support: x.support, near: x.near, P: x.P, T: x.T, alpha: x.alpha, Ls: x.Ls}))};
+    c.ed = Date.now(); save(); render(); await drawIcons();
+    lugMsg(`<span class="ok">Golfari salvati in "${esc(c.name)}".</span>`);
+  };
+  $('#lugCopy').onclick = async () => {
+    if (!LUG || !LUG.res) return; const d = (v, k) => v.toFixed(k).replace('.', ',');
+    const L = [[`Golfari ${LUG.c.name}`], ['Peso (t)', d(LUG.res.W, 1), ($('#lugMetric').value === 'radial' ? 'Distanza in pianta dal COG (m)' : 'Distanza lungo l\'asse dal COG (m)'), d(LUG.res.R, 3), 'Scarto (mm)', d(LUG.res.dev * 1000, 0), 'Quota gancio (m)', d(LUG.res.hook[2], 2)], [],
+      ['Golfare', 'Trave', 'Distanza in pianta m', 'X modello', 'Y modello', 'Z', 'X gruppo', 'Y gruppo', 'Appoggio %', 'Carico t', 'Angolo fune', 'Tiro t', 'Lunghezza fune m']];
+    LUG.res.rows.forEach(x => L.push(['G' + x.k, x.g, d(x.d, 3), d(x.x, 3), d(x.y, 3), d(x.z, 3), d(x.rl[0], 3), d(x.rl[1], 3), d(x.support * 100, 0), d(x.P, 1), d(x.alpha, 1), d(x.T, 1), d(x.Ls, 2)]));
+    const txt = L.map(r => r.join('\t')).join('\n');
+    try { await navigator.clipboard.writeText(txt); } catch (e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    lugMsg('Tabella dei golfari copiata: incollala in Excel.');
+  };
+
   async function exportCogs(cogs, g, kind) {
     cogs = cogs.filter(Boolean); if (!cogs.length) { setState('Nessun baricentro da esportare in questo gruppo.'); return; }
     try {
       let proj = {}; try { proj = await api.project.getProject(); } catch (e) {}
       const sheets = [], notes = [];
       for (const c of cogs) {
-        const parts = await partsOf(c);
-        if (!parts || !parts.length) throw new Error(`"${c.name}": non trovo gli identificativi dei pezzi`);
-        const items = []; let ref = null, missing = 0;
-        for (const part of parts) {
-          const M = await getModel(part.m);
-          const eid = M.m.g2e.get(part.g); if (eid == null) { missing++; continue; }
-          if (!M.m.ref) M.m.ref = c.cog.map(v => Math.round(v));
-          if (!ref) ref = M.m.ref;
-          const lv = PBDraw.leaves(M.m, eid, new Set());
-          for (const e of lv) { const ms = PBDraw.meshOf(M.m, e, ref); if (ms.idx.length) items.push({ms, part, n: lv.size}); }
-        }
-        if (!items.length) throw new Error(`"${c.name}": i pezzi non si trovano nel file IFC. È lo stesso modello aperto nel visualizzatore?`);
+        const {items, ref2, cog, W, Wb, missing, mism} = await cogGeometry(c);
         expMsg(`Disegno "${esc(c.name)}"…`, true); await tick();
-        // allineamento IFC -> coordinate del visualizzatore (confronto degli ingombri)
-        const bb = PBDraw.bboxOf(items.map(i => i.ms));
-        const o1 = [0, 1, 2].map(i => c.mn[i] - (bb.mn[i] + ref[i])), o2 = [0, 1, 2].map(i => c.mx[i] - (bb.mx[i] + ref[i]));
-        const off = [0, 1, 2].map(i => (o1[i] + o2[i]) / 2), mism = Math.max(...[0, 1, 2].map(i => Math.abs(o1[i] - o2[i])));
-        const ref2 = ref.map((v, i) => v + off[i]);
-        // peso e baricentro sui volumi reali
-        const rho = +$('#rho').value; let W = 0, Wb = 0; const C = [0, 0, 0];
-        for (const it of items) {
-          const vc = PBDraw.volCentroid(it.ms); let w;
-          if (it.part.how === 'bolt' || it.ms.bolt) { if (!$('#boltW').checked) continue; w = vc.V * rho; Wb += w; }
-          else w = it.part.w > 0 ? it.part.w / it.n : vc.V * rho;
-          W += w; for (let d = 0; d < 3; d++) C[d] += w * vc.c[d];
-        }
-        const cog = C.map((v, i) => v / W + ref2[i]);
         const sh = PBDraw.buildSheet({meshes: items.map(i => i.ms), ref: ref2, cog, origin: g.origin, rot: g.rot, name: c.name, weight: W, boltWeight: Wb,
           nPieces: c.n, marks: c.marks || [], group: g.name, project: proj.name || '', model: Object.values(ifcCache).map(x => x.name).join(', '), drawBolts: $('#boltD').checked});
         sheets.push({prims: sh.prims, S: sh.scale});
