@@ -649,6 +649,88 @@
     return `ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('ViewDefinition [ReferenceView_V1.2]'),'2;1');\nFILE_NAME(${str(d.name + '_sollevamento.ifc')},'${new Date().toISOString().slice(0, 19)}',(''),(''),'Peso e baricentro','Peso e baricentro','');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n` + out.join('\n') + '\nENDSEC;\nEND-ISO-10303-21;\n';
   }
 
-  const API = {buildLugSheet, lugIfc, liftModel, placeLugs, slingForces, IFC, toDxfMulti, initIfc, openIfc, meshOf, leaves, volCentroid, bboxOf, buildSheet, toPdf, toDxf, featureEdges, hiddenLine};
+  // ------------------------------------------------------------------ INSERIMENTO NEL FILE IFC ORIGINALE
+  /**
+   * Inserisce funi, golfari, gancio e baricentro nel testo IFC originale (IFC2X3 o IFC4).
+   * setups: [{name, weight, cog, ax, hook, lugs:[{x,y,z,T,P,Ls,alpha,type,shackle,g}], lugL}] in coordinate del mondo IFC (metri).
+   * Un eventuale blocco inserito in precedenza viene sostituito.
+   */
+  function insertIntoIfc(text, setups) {
+    const B0 = '/* PESO-BARICENTRO SOLLEVAMENTO INIZIO */', B1 = '/* PESO-BARICENTRO SOLLEVAMENTO FINE */';
+    const i0 = text.indexOf(B0); if (i0 >= 0) { const i1 = text.indexOf(B1, i0); if (i1 > 0) text = text.slice(0, i0) + text.slice(i1 + B1.length); }
+    const schema = /FILE_SCHEMA\s*\(\s*\(\s*'IFC4/i.test(text) ? 'IFC4' : 'IFC2X3';
+    const first = re => { const m = text.match(re); return m ? '#' + m[1] : null; };
+    const owner = first(/#(\d+)\s*=\s*IFCOWNERHISTORY\s*\(/i);
+    const body = first(/#(\d+)\s*=\s*IFCGEOMETRICREPRESENTATIONSUBCONTEXT\s*\(\s*'Body'/i) || first(/#(\d+)\s*=\s*IFCGEOMETRICREPRESENTATIONCONTEXT\s*\(/i);
+    const cont = first(/#(\d+)\s*=\s*IFCBUILDINGSTOREY\s*\(/i) || first(/#(\d+)\s*=\s*IFCBUILDING\s*\(/i) || first(/#(\d+)\s*=\s*IFCSITE\s*\(/i);
+    if (!body || !cont) throw new Error('struttura IFC non riconosciuta (contesto o contenitore spaziale mancante)');
+    if (schema === 'IFC2X3' && !owner) throw new Error('IFC2X3 senza IfcOwnerHistory');
+    const lu = text.match(/IFCSIUNIT\s*\(\s*\*\s*,\s*\.LENGTHUNIT\.\s*,\s*(\.\w+\.|\$)\s*,\s*\.METRE\.\s*\)/i);
+    const scale = !lu ? 1000 : ({'.MILLI.': 1000, '.CENTI.': 100, '.DECI.': 10, '$': 1}[lu[1].toUpperCase()] || 1);
+    let maxId = 0; const reId = /#(\d+)\s*=/g; let mm;
+    while ((mm = reId.exec(text))) { const v = +mm[1]; if (v > maxId) maxId = v; }
+    const out = []; let n = maxId; const add = s => { n++; out.push(`#${n}=${s};`); return `#${n}`; };
+    const G64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
+    const guid = () => { let g = G64[Math.floor(Math.random() * 4)]; for (let i = 0; i < 21; i++) g += G64[Math.floor(Math.random() * 64)]; return g; };
+    const str = v => `'${String(v ?? '').replace(/\\/g, '\\\\').replace(/'/g, "''").replace(/[^\x20-\x7e]/g, ch => { const c = ch.charCodeAt(0); return c < 256 ? `\\X\\${c.toString(16).toUpperCase().padStart(2, '0')}` : `\\X2\\${c.toString(16).toUpperCase().padStart(4, '0')}\\X0\\`; })}'`;
+    const OH = schema === 'IFC2X3' ? owner : '$';
+    const f = v => (Math.round(v * scale * 10) / 10).toFixed(1);
+    const p0 = add('IFCCARTESIANPOINT((0.,0.,0.))'), dz = add('IFCDIRECTION((0.,0.,1.))'), dx = add('IFCDIRECTION((1.,0.,0.))');
+    const pl = add(`IFCLOCALPLACEMENT($,${add(`IFCAXIS2PLACEMENT3D(${p0},${dz},${dx})`)})`); // coordinate assolute del mondo
+    const styles = {};
+    const style = hex => { if (styles[hex]) return styles[hex]; const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+      const col = add(`IFCCOLOURRGB($,${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)})`);
+      const sh = schema === 'IFC2X3' ? add(`IFCSURFACESTYLESHADING(${col})`) : add(`IFCSURFACESTYLESHADING(${col},0.)`);
+      const ss = add(`IFCSURFACESTYLE($,.BOTH.,(${sh}))`);
+      return styles[hex] = schema === 'IFC2X3' ? add(`IFCPRESENTATIONSTYLEASSIGNMENT((${ss}))`) : ss; };
+    const shape = (V, F, hex) => {
+      let item;
+      if (schema === 'IFC4') { const pts = add(`IFCCARTESIANPOINTLIST3D((${V.map(v => `(${f(v[0])},${f(v[1])},${f(v[2])})`).join(',')}))`); item = add(`IFCTRIANGULATEDFACESET(${pts},$,.T.,(${F.map(t => `(${t[0] + 1},${t[1] + 1},${t[2] + 1})`).join(',')}),$)`); }
+      else { const P = V.map(v => add(`IFCCARTESIANPOINT((${f(v[0])},${f(v[1])},${f(v[2])}))`));
+        const faces = F.map(t => add(`IFCFACE((${add(`IFCFACEOUTERBOUND(${add(`IFCPOLYLOOP((${P[t[0]]},${P[t[1]]},${P[t[2]]}))`)},.T.)`)}))`));
+        item = add(`IFCFACETEDBREP(${add(`IFCCLOSEDSHELL((${faces.join(',')}))`)})`); }
+      add(`IFCSTYLEDITEM(${item},(${style(hex)}),$)`);
+      return add(`IFCPRODUCTDEFINITIONSHAPE($,$,(${add(`IFCSHAPEREPRESENTATION(${body},'Body','${schema === 'IFC4' ? 'Tessellation' : 'Brep'}',(${item}))`)}))`);
+    };
+    const pset = (obj, props) => { const ps = props.map(([k, v]) => add(`IFCPROPERTYSINGLEVALUE(${str(k)},$,${typeof v === 'number' ? `IFCREAL(${v.toFixed(3)})` : `IFCLABEL(${str(v)})`},$)`));
+      add(`IFCRELDEFINESBYPROPERTIES('${guid()}',${OH},$,$,(${obj}),${add(`IFCPROPERTYSET('${guid()}',${OH},'PB_Sollevamento',$,(${ps.join(',')}))`)})`); };
+    const tail = schema === 'IFC4' ? '.NOTDEFINED.' : '$';
+    const proxy = (name, type, V, F, hex, props) => { const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',${OH},${str(name)},$,${str(type)},${pl},${shape(V, F, hex)},${str(name)},${tail})`); pset(e, props); return e; };
+    const geo = solids();
+    const items = [];
+    setups.forEach(su => {
+      const ax = [su.ax[0], su.ax[1], 0], pv = [-su.ax[1], su.ax[0], 0];
+      su.lugs.forEach((l, i) => {
+        const [V, F] = geo.lug(l, ax, pv, su.lugL || 0.55);
+        items.push(proxy(`${su.name} - Golfare F${i + 1}`, 'PB_GOLFARE', V, F, '#e2a900', [['Sollevamento', su.name], ['Tiro_t', l.T], ['Carico_t', l.P], ['Tipo', l.type || ''], ['Grillo', l.shackle || ''], ['Trave', l.g || '']]));
+        const [V2, F2] = geo.tube([l.x, l.y, l.z + 0.16], su.hook, 0.03);
+        items.push(proxy(`${su.name} - Fune F${i + 1}`, 'PB_FUNE', V2, F2, '#1f5fbf', [['Sollevamento', su.name], ['Tiro_t', l.T], ['Lunghezza_m', l.Ls], ['Angolo_deg', l.alpha]]));
+      });
+      const [Vh, Fh] = geo.box([su.hook[0], su.hook[1], su.hook[2] + 0.4], 0.6, 0.4, 0.8);
+      items.push(proxy(`${su.name} - Gancio`, 'PB_GANCIO', Vh, Fh, '#c0392b', [['Sollevamento', su.name], ['Quota_m', su.hook[2]], ['Peso_t', su.weight]]));
+      const [Vc, Fc] = geo.oct(su.cog, 0.4);
+      items.push(proxy(`${su.name} - Baricentro`, 'PB_BARICENTRO', Vc, Fc, '#d62728', [['Sollevamento', su.name], ['Peso_t', su.weight], ['X', su.cog[0]], ['Y', su.cog[1]], ['Z', su.cog[2]]]));
+    });
+    add(`IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid()}',${OH},'PB_Sollevamento',$,(${items.join(',')}),${cont})`);
+    const k = text.lastIndexOf('ENDSEC;'); if (k < 0) throw new Error('file IFC incompleto');
+    return {text: text.slice(0, k) + B0 + '\n' + out.join('\n') + '\n' + B1 + '\n' + text.slice(k), added: items.length, schema};
+  }
+  // solidi elementari (metri, coordinate del mondo)
+  function solids() {
+    const prism = (base, h) => { const nb = base.length, V = [...base, ...base.map(p => [p[0] + h[0], p[1] + h[1], p[2] + h[2]])], F = [];
+      for (let i = 1; i < nb - 1; i++) { F.push([0, i + 1, i]); F.push([nb, nb + i, nb + i + 1]); }
+      for (let i = 0; i < nb; i++) { const j = (i + 1) % nb; F.push([i, j, nb + j], [i, nb + j, nb + i]); }
+      return [V, F]; };
+    const tube = (a, b, r, seg = 10) => { const ax = norm([b[0] - a[0], b[1] - a[1], b[2] - a[2]]); const t = Math.abs(ax[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]; const u = norm(cross(ax, t)), w = cross(ax, u);
+      const ring = c => Array.from({length: seg}, (_, i) => { const an = i / seg * Math.PI * 2, cc = Math.cos(an) * r, ss = Math.sin(an) * r; return [c[0] + u[0] * cc + w[0] * ss, c[1] + u[1] * cc + w[1] * ss, c[2] + u[2] * cc + w[2] * ss]; });
+      return prism(ring(a).reverse(), [b[0] - a[0], b[1] - a[1], b[2] - a[2]]); };
+    const box = (c, sx, sy, sz) => prism([[c[0] - sx / 2, c[1] - sy / 2, c[2] - sz / 2], [c[0] + sx / 2, c[1] - sy / 2, c[2] - sz / 2], [c[0] + sx / 2, c[1] + sy / 2, c[2] - sz / 2], [c[0] - sx / 2, c[1] + sy / 2, c[2] - sz / 2]], [0, 0, sz]);
+    const lug = (l, ax, pv, L) => { const Hh = 0.3, th = 0.035; const P = (u, z) => [l.x + ax[0] * u - pv[0] * th / 2, l.y + ax[1] * u - pv[1] * th / 2, l.z + z];
+      return prism([P(-L / 2, 0), P(L / 2, 0), P(L * 0.2, Hh), P(-L * 0.2, Hh)], [pv[0] * th, pv[1] * th, 0]); };
+    const oct = (c, s) => [[[c[0] + s, c[1], c[2]], [c[0] - s, c[1], c[2]], [c[0], c[1] + s, c[2]], [c[0], c[1] - s, c[2]], [c[0], c[1], c[2] + s], [c[0], c[1], c[2] - s]], [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]]];
+    return {prism, tube, box, lug, oct};
+  }
+
+  const API = {insertIntoIfc, buildLugSheet, lugIfc, liftModel, placeLugs, slingForces, IFC, toDxfMulti, initIfc, openIfc, meshOf, leaves, volCentroid, bboxOf, buildSheet, toPdf, toDxf, featureEdges, hiddenLine};
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.PBDraw = API;
 })(typeof window !== 'undefined' ? window : globalThis);

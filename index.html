@@ -109,6 +109,7 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
     <button class="sm" id="copy">Copia tabella</button>
   </div>
   <div class="row"><b style="font-size:12px">Tavole del gruppo:</b><button class="sm pri" id="gPdf">PDF</button><button class="sm" id="gDxf">DXF</button></div>
+  <div class="row"><button class="sm" id="insIfc" title="Aggiunge funi, golfari, gancio e baricentro di tutti i sollevamenti salvati al file IFC del modello">Inserisci le funi nel modello IFC</button></div>
   <div id="cogList" style="display:flex;flex-direction:column;gap:6px"></div>
   <div class="note" id="gTot"></div>
 </section>
@@ -159,7 +160,7 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
   <label class="row"><input type="checkbox" id="boltD"> Disegna i bulloni nelle tavole</label>
   <label class="row">Densità per elementi senza peso <input type="number" id="rho" value="7850" step="10" style="width:80px"> kg/m³</label>
   <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"); se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con travi, lamiere e piatti l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati. Gruppi e baricentri sono condivisi nel progetto (PesoBaricentro/baricentri.json).</div>
-  <div class="note">Versione 8 · 20/11/2026</div>
+  <div class="note">Versione 9 · 20/11/2026</div>
 </details>
 
 <script src="tcwapi.js"></script>
@@ -174,7 +175,7 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
   const kgt = W => W >= 1000 ? nf(W / 1000, 2) + ' t' : nf(W, 1) + ' kg';
   const setState = (t, busy) => { $('#state').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
-  const PB_VERSION = '8 (20/11/2026)';
+  const PB_VERSION = '9 (20/11/2026)';
   let tokenWaiter = null;
   let api, cur = null, runId = 0, timer = null, pickMode = null, hlCog = null, showIcons = true, store;
 
@@ -673,7 +674,7 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
     catch (e) { expMsg(`<span class="warn">Non riesco a scaricare l'IFC da Trimble Connect (${esc(e && e.message || e)}). Scegli lo stesso file IFC dal computer: viene letto solo in questo browser, non viene caricato da nessuna parte.</span>`); src = await askLocalFile(); }
     if (!isIfc(src.bytes)) throw new Error('il file scelto non è un IFC');
     expMsg('Lettura del modello IFC…', true); await tick();
-    return ifcCache[modelId] = {m: PBDraw.openIfc(modelId, src.bytes), name: src.name};
+    return ifcCache[modelId] = {m: PBDraw.openIfc(modelId, src.bytes), name: src.name, bytes: src.bytes};
   }
   async function partsOf(c) { // per i baricentri salvati prima di questa versione
     if (c.parts && c.parts.length) return c.parts;
@@ -719,7 +720,7 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
       W += w; for (let d = 0; d < 3; d++) C[d] += w * vc.c[d];
     }
     const cogR = C.map(v => v / W);
-    return {items, ref2, cogR, cog: cogR.map((v, i) => v + ref2[i]), W, Wb, missing, mism};
+    return {items, ref2, cogR, cog: cogR.map((v, i) => v + ref2[i]), W, Wb, missing, mism, off: off, model: parts[0].m};
   }
   // ================= golfari =================
   let LUG = null;
@@ -799,6 +800,7 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
     if (rows.some(x => x.support < 0.9)) warn.push('<span class="ko">un golfare non appoggia completamente sulla piattabanda</span>');
     if (rows.some(x => x.studs > 0)) warn.push('<span class="warn">pioli o bulloni nell\'impronta di un golfare</span>');
     if (rows.some(x => x.alpha < 45)) warn.push('<span class="warn">fune con angolo inferiore a 45°: alza il gancio</span>');
+    const Ps = rows.map(x => x.P); if (Math.max(...Ps) > 2 * Math.min(...Ps)) warn.push('<span class="warn">carichi molto sbilanciati: il baricentro non è centrato fra i golfari scelti</span>');
     if (rows.some(x => !x.type || !x.shackle)) warn.push('<span class="ko">tiro oltre il catalogo di golfari o grilli</span>');
     if ((man || moved) && rows.some(x => x.near > 0.15)) warn.push('<span class="warn">un golfare non è in asse a un diaframma o irrigidimento</span>');
     $('#lugSum').innerHTML = `${axial ? 'Distanza lungo l\'asse' : 'Distanza in pianta'} dal baricentro ${nf(LUG.res.R, 3)} m · scarto fra i golfari <b>${nf(LUG.res.dev * 1000, 0)} mm</b> · gancio a quota ${nf(hookZ + ref[2], 2)} m` + (warn.length ? '<br>' + warn.join(' · ') : ' · <span class="ok">✓ tutti i golfari appoggiano sulla piattabanda</span>');
@@ -833,7 +835,7 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
   $('#lugClose').onclick = () => { $('#lugBox').hidden = true; LUG = null; drawIcons(); };
   $('#lugSave').onclick = async () => {
     if (!LUG || !LUG.res) return; const {c, res} = LUG;
-    c.lugs = {custom: {...LUG.custom}, fd: res.fd, metric: $('#lugMetric').value, n: res.n, girders: res.gs, mode: res.mode, alt: LUG.alt || 0, R: res.R, dev: res.dev, H: res.H, W: res.W, lugL: res.lugL, lugWd: res.lugWd, hook: res.hook,
+    c.lugs = {off: LUG.geo.off, model: LUG.geo.model, cog: LUG.geo.cog, ax: res.ax, custom: {...LUG.custom}, fd: res.fd, metric: $('#lugMetric').value, n: res.n, girders: res.gs, mode: res.mode, alt: LUG.alt || 0, R: res.R, dev: res.dev, H: res.H, W: res.W, lugL: res.lugL, lugWd: res.lugWd, hook: res.hook,
       points: res.rows.map(x => ({type: x.type, shackle: x.shackle, x: x.x, y: x.y, z: x.z, d: x.d, g: x.g, support: x.support, near: x.near, P: x.P, T: x.T, alpha: x.alpha, Ls: x.Ls}))};
     c.ed = Date.now(); save(); render(); await drawIcons();
     lugMsg(`<span class="ok">Golfari salvati in "${esc(c.name)}".</span>`);
@@ -893,6 +895,32 @@ table.lt td{padding:2px 3px;border-bottom:1px solid #eef0ef;font-family:var(--m)
       expMsg(notes.join('<br>'));
     } catch (e) { expMsg('<span class="ko">Esportazione non riuscita: ' + esc(e && e.message || e) + '</span>'); }
   }
+  // ---- funi dentro il file IFC originale (nuova versione del modello)
+  const bytesToStr = b => { let out = ''; for (let i = 0; i < b.length; i += 0x8000) out += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return out; };
+  const strToBytes = t => { const b = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) b[i] = t.charCodeAt(i) & 255; return b; };
+  $('#insIfc').onclick = async () => {
+    const all = []; store.groups.forEach(g => g.cogs.forEach(c => { if (c.lugs && c.lugs.points && c.lugs.points.length) all.push(c); }));
+    if (!all.length) { expMsg('<span class="warn">Nessun sollevamento salvato: apri "Golfari" su un baricentro e premi "Salva nel baricentro".</span>'); return; }
+    try {
+      const byModel = {};
+      for (const c of all) { let m = c.lugs.model; if (!m) { const parts = await partsOf(c); m = parts && parts[0] && parts[0].m; } if (m) (byModel[m] ||= []).push(c); }
+      for (const [m, cs] of Object.entries(byModel)) {
+        const M = await getModel(m);
+        expMsg(`Inserisco ${cs.length} sollevamenti in "${esc(M.name)}"…`, true); await tick();
+        const setups = [];
+        for (const c of cs) {
+          let off = c.lugs.off, ax = c.lugs.ax, cog = c.lugs.cog;
+          if (!off || !ax || !cog) { const geo = await cogGeometry(c); off = geo.off; cog = geo.cog; ax = ax || PBDraw.liftModel(geo.items.map(i => i.ms), geo.cogR, {}).ax; }
+          const W = p => [p[0] - off[0], p[1] - off[1], p[2] - off[2]];
+          setups.push({name: c.name, weight: c.lugs.W, cog: W(cog), ax, hook: W(c.lugs.hook), lugL: c.lugs.lugL,
+            lugs: c.lugs.points.map(q => { const w = W([q.x, q.y, q.z]); return {...q, x: w[0], y: w[1], z: w[2]}; })});
+        }
+        const res = PBDraw.insertIntoIfc(bytesToStr(M.bytes), setups);
+        saveFile(M.name || 'modello.ifc', new Blob([strToBytes(res.text)], {type: 'application/x-step'}));
+        expMsg(`<span class="ok">Pronto "${esc(M.name)}" con ${cs.length} sollevamenti (${res.added} oggetti, ${res.schema}).</span> Caricalo nella stessa cartella del modello in Trimble Connect, con lo stesso nome: diventa una nuova versione del modello con funi, golfari e gancio dentro. Se in seguito riesporti l'IFC da Tekla, ripeti l'inserimento.`);
+      }
+    } catch (e) { expMsg('<span class="ko">Inserimento non riuscito: ' + esc(e && e.message || e) + '</span>'); }
+  };
   $('#gPdf').onclick = () => exportCogs(G().cogs, G(), 'pdf');
   $('#gDxf').onclick = () => exportCogs(G().cogs, G(), 'dxf');
 
