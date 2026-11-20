@@ -120,7 +120,8 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   <label class="row"><input type="checkbox" id="boltW" checked> Nelle tavole aggiungi il peso dei bulloni (da volume)</label>
   <label class="row"><input type="checkbox" id="boltD"> Disegna i bulloni nelle tavole</label>
   <label class="row">Densità per elementi senza peso <input type="number" id="rho" value="7850" step="10" style="width:80px"> kg/m³</label>
-  <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"); se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con travi, lamiere e piatti l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati. Gruppi e baricentri restano salvati in questo browser, separati per progetto.</div>
+  <div class="note">Peso: proprietà del modello (es. "Tekla Quantity · Weight"); se manca, volume × densità. Baricentro: media dei centri dei pezzi pesata sul loro peso. Con travi, lamiere e piatti l'errore è di pochi centimetri; pezzi molto obliqui o sagomati possono spostarlo di più. I bulloni non hanno peso nelle proprietà Tekla e non vengono conteggiati. Gruppi e baricentri sono condivisi nel progetto (PesoBaricentro/baricentri.json).</div>
+  <div class="note">Versione 6 · 20/11/2026</div>
 </details>
 
 <script src="tcwapi.js"></script>
@@ -135,6 +136,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   const kgt = W => W >= 1000 ? nf(W / 1000, 2) + ' t' : nf(W, 1) + ' kg';
   const setState = (t, busy) => { $('#state').innerHTML = (busy ? '<span class="spin"></span>' : '') + t; };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  const PB_VERSION = '6 (20/11/2026)';
   let tokenWaiter = null;
   let api, cur = null, runId = 0, timer = null, pickMode = null, hlCog = null, showIcons = true, store;
 
@@ -453,7 +455,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     for (const h of hosts) {
       let r;
       try { r = await fetch(h + '/tc/api/2.0' + path, {...opts, headers: {Authorization: 'Bearer ' + SH.tok, ...(opts.headers || {})}}); }
-      catch (e) { last = new Error('rete o permessi del browser (' + (e.message || e) + ')'); continue; }
+      catch (e) { last = new Error(`rete o permessi del browser su ${(opts.method || 'GET')} ${path.split('?')[0]} (${e.message || e})`); continue; }
       if (r.ok) { SH.host = h; return r; }
       if (r.status === 401 && retry) { SH.tok = null; return tcFetch(path, opts, false); }
       last = new Error(`HTTP ${r.status} su ${path.split('?')[0]}`);
@@ -526,7 +528,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     return norm(store) !== before;
   }
   async function diagnose(err) {
-    const L = ['Errore: ' + (err && err.message || err), 'Pagina: ' + location.origin + (window.isSecureContext ? ' (sicura)' : ''), 'Browser: ' + navigator.userAgent.replace(/\(.*?\)/, '').trim().slice(0, 80)];
+    const L = ['Versione estensione: ' + PB_VERSION, 'Errore: ' + (err && err.message || err), 'Pagina: ' + location.origin + (window.isSecureContext ? ' (sicura)' : ''), 'Browser: ' + navigator.userAgent.replace(/\(.*?\)/, '').trim().slice(0, 80)];
     try { localStorage.setItem('pb-test', '1'); L.push('Archivio del browser: ok'); } catch (e) { L.push('Archivio del browser: NON disponibile (' + e.message + ')'); }
     let proj = {}; try { proj = await api.project.getProject(); L.push('Progetto: ' + (proj.name || '') + ' · regione ' + (proj.location || '?')); } catch (e) { L.push('Progetto: non letto'); }
     const h = SH.host || HOSTS[String(proj.location || '').toLowerCase().replace(/[^a-z]/g, '')] || HOSTS.europe;
@@ -534,6 +536,11 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     try { const r = await fetch(h + '/tc/api/2.0/regions'); L.push('Prova senza accesso: HTTP ' + r.status); } catch (e) { L.push('Prova senza accesso: ERRORE ' + e.message); }
     L.push('Permesso di accesso: ' + (SH.tok ? 'ottenuto (' + String(SH.tok).length + ' caratteri)' : 'non ottenuto'));
     if (SH.tok) { try { const r = await fetch(h + '/tc/api/2.0/projects/' + encodeURIComponent(projKey), {headers: {Authorization: 'Bearer ' + SH.tok}}); L.push('Prova con accesso: HTTP ' + r.status); } catch (e) { L.push('Prova con accesso: ERRORE ' + e.message); } }
+    // prove di scrittura con un accesso fittizio: non modificano nulla, verificano solo che il browser lasci passare la chiamata
+    for (const [k, path, body] of [['crea cartella', '/folders', '{"name":"x","parentId":"x"}'], ['avvio caricamento', '/files/fs/upload?parentId=x&parentType=FOLDER', '{"name":"x.json"}']]) {
+      try { const r = await fetch(h + '/tc/api/2.0' + path, {method: 'POST', headers: {Authorization: 'Bearer prova', 'Content-Type': 'application/json'}, body}); L.push(`Prova scrittura (${k}): HTTP ${r.status}`); }
+      catch (e) { L.push(`Prova scrittura (${k}): ERRORE ${e.message}`); }
+    }
     return L.join('\n');
   }
   function scheduleSync() { clearTimeout(SH.timer); SH.timer = setTimeout(sync, 1200); }
