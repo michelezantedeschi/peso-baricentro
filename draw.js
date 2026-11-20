@@ -276,7 +276,7 @@
   function wrap(s, n) { const out = []; let cur = ''; s.split(', ').forEach(w => { if ((cur + ', ' + w).length > n && cur) { out.push(cur + ','); cur = w; } else cur = cur ? cur + ', ' + w : w; }); if (cur) out.push(cur); return out; }
 
   // ------------------------------------------------------------------ PDF
-  const LW = {CONTORNI: [0, 0, 0], VISTA_3D: [40, 40, 40], QUOTE: [0, 90, 160], BARICENTRO: [200, 30, 30], ORIGINE: [0, 130, 60], TESTI: [20, 20, 20], CORNICE: [0, 0, 0]};
+  const LW = {FUNI: [31, 95, 191], GOLFARI: [180, 120, 0], ASSI: [120, 120, 120], CONTORNI: [0, 0, 0], VISTA_3D: [40, 40, 40], QUOTE: [0, 90, 160], BARICENTRO: [200, 30, 30], ORIGINE: [0, 130, 60], TESTI: [20, 20, 20], CORNICE: [0, 0, 0]};
   function toPdf(doc, prims, addPage) {
     if (addPage) doc.addPage('a3', 'landscape');
     const Hh = 297, Y = y => Hh - y;
@@ -294,7 +294,7 @@
   }
 
   // ------------------------------------------------------------------ DXF (R12, unità = mm reali per le viste in scala)
-  const DXFCOL = {CONTORNI: 7, VISTA_3D: 8, QUOTE: 4, BARICENTRO: 1, ORIGINE: 3, TESTI: 7, CORNICE: 7};
+  const DXFCOL = {FUNI: 5, GOLFARI: 2, ASSI: 8, CONTORNI: 7, VISTA_3D: 8, QUOTE: 4, BARICENTRO: 1, ORIGINE: 3, TESTI: 7, CORNICE: 7};
   function toDxf(prims, S) { return toDxfMulti([{prims, S}]); }
   function toDxfMulti(sheets) {
     const o = [];
@@ -495,6 +495,160 @@
     return points.map((p, i) => { const h = hookZ - p.z, Ls = Math.hypot(p.d, h), alpha = Math.atan2(h, p.d) * 180 / Math.PI; return {P: P[i], Ls, alpha, T: P[i] / Math.sin(alpha * Math.PI / 180)}; });
   }
 
-  const API = {liftModel, placeLugs, slingForces, IFC, toDxfMulti, initIfc, openIfc, meshOf, leaves, volCentroid, bboxOf, buildSheet, toPdf, toDxf, featureEdges, hiddenLine};
+  // ------------------------------------------------------------------ TAVOLA DI SOLLEVAMENTO (golfari e funi)
+  /**
+   * d = {meshes (rel. ref), ref, cog (ass.), ax:[ax,ay], lugs:[{x,y,z,label,T,P,alpha,Ls,g,type,shackle}], hook:[x,y,z],
+   *      name, weight, project, model, group, drawBolts, fd}
+   */
+  function buildLugSheet(d) {
+    const ax = d.ax, pv = [-ax[1], ax[0]], c0 = d.cog;
+    const toL = (x, y, z) => { const dx = x - c0[0], dy = y - c0[1]; return [dx * ax[0] + dy * ax[1], dx * pv[0] + dy * pv[1], z - c0[2]]; };
+    const draw = d.meshes.filter(m => d.drawBolts || !m.bolt);
+    const local = draw.map(m => { const q = new Float64Array(m.pos.length); for (let i = 0; i < q.length; i += 3) { const s = toL(m.pos[i] + d.ref[0], m.pos[i + 1] + d.ref[1], m.pos[i + 2] + d.ref[2]); q[i] = s[0]; q[i + 1] = s[1]; q[i + 2] = s[2]; } return {pos: q, idx: m.idx}; });
+    const edges = local.map(m => featureEdges(m, 25));
+    const lugs = d.lugs.map(l => ({...l, L: toL(l.x, l.y, l.z)})), hook = toL(d.hook[0], d.hook[1], d.hook[2]);
+    const VIEWS = {front: {f: [0, 1, 0], up: [0, 0, 1], title: 'PROSPETTO'}, plan: {f: [0, 0, -1], up: [0, 1, 0], title: 'PIANTA'}, side: {f: [1, 0, 0], up: [0, 0, 1], title: 'SEZIONE TRASVERSALE'}};
+    const H = {}; for (const k in VIEWS) H[k] = hiddenLine(local, edges, VIEWS[k], 1400);
+    // ingombri comprensivi di funi e gancio
+    const ext = k => { const h = H[k]; let u0 = h.umin, u1 = h.umax, v0 = h.vmin, v1 = h.vmax; [hook, ...lugs.map(l => l.L)].forEach(p => { const q = h.prj(p[0], p[1], p[2]); u0 = Math.min(u0, q[0]); u1 = Math.max(u1, q[0]); v0 = Math.min(v0, q[1]); v1 = Math.max(v1, q[1]); }); return {u0, u1, v0, v1}; };
+    const E = {front: ext('front'), plan: ext('plan'), side: ext('side')};
+    const top = 287, bot = 50;
+    const R = {front: [12, top - 125, 270, 125], plan: [12, bot, 270, top - 125 - bot], side: [284, top - 125, 124, 125], tab: [284, bot, 124, top - 125 - bot]};
+    const need = k => { const e = E[k], r = R[k]; return Math.max((e.u1 - e.u0) / (r[2] - 30), (e.v1 - e.v0) / (r[3] - 26)) * 1000; };
+    const S = SCALES.find(s => s >= Math.max(need('front'), need('plan'), need('side'))) || 5000;
+    const P = [];
+    const Ln = (a, b, layer, w) => P.push({t: 'line', a, b, layer: layer || 'CONTORNI', w: w || 0.25});
+    const T = (p, txt, size, layer, align) => P.push({t: 'text', p, txt: String(txt), s: size || 2.5, layer: layer || 'TESTI', align: align || 'left'});
+    const C = (c, r, layer) => P.push({t: 'circle', c, r, layer: layer || 'BARICENTRO'});
+    const SEC = (c, r, a0, a1, layer) => P.push({t: 'sector', c, r, a0, a1, layer: layer || 'BARICENTRO'});
+    const rect = (x, y, w, h, layer, wt) => { Ln([x, y], [x + w, y], layer, wt); Ln([x + w, y], [x + w, y + h], layer, wt); Ln([x + w, y + h], [x, y + h], layer, wt); Ln([x, y + h], [x, y], layer, wt); };
+    const cogSym = (c, r) => { C(c, r); SEC(c, r, 0, 90); SEC(c, r, 180, 270); };
+    const dashed = (a, b, layer) => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.floor(L / 4)); for (let i = 0; i < n; i++) { const t0 = i / n, t1 = (i + 0.6) / n; Ln([a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0], [a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1], layer || 'ASSI', 0.13); } };
+    const mm = v => nf(Math.abs(v) * 1000, 0);
+    // raggruppa valori vicini (golfari di due travi quasi alla stessa progressiva): una quota con i due valori
+    const clusters = vals => { const sorted = [...vals].sort((a, b) => a - b), out = [];
+      sorted.forEach(v => { const l = out[out.length - 1]; if (l && Math.abs(v - l.vals[l.vals.length - 1]) < 0.25) l.vals.push(v); else out.push({vals: [v]}); });
+      return out.map(c => ({v: c.vals.reduce((a, b) => a + b, 0) / c.vals.length, txt: [...new Set(c.vals.map(x => mm(x)))].join(' / ')})); };
+    rect(5, 5, 410, 287, 'CORNICE', 0.5);
+    for (const k of ['front', 'plan', 'side', 'tab']) rect(...R[k], 'CORNICE', 0.18);
+    function place(k) {
+      const h = H[k], e = E[k], r = R[k], k2 = 1000 / S;
+      const cu = (e.u0 + e.u1) / 2, cv = (e.v0 + e.v1) / 2, ox = r[0] + r[2] / 2 - 4, oy = r[1] + r[3] / 2 + 2;
+      const map = (u, v) => [ox + (u - cu) * k2, oy + (v - cv) * k2];
+      const pm = p => { const q = h.prj(p[0], p[1], p[2]); return map(q[0], q[1]); };
+      h.segs.forEach(sg => Ln(map(sg[0], sg[1]), map(sg[2], sg[3]), 'CONTORNI', 0.25));
+      T([r[0] + 2, r[1] + r[3] - 4], VIEWS[k].title + '   1:' + S, 2.8);
+      const cp = pm([0, 0, 0]), hp = pm(hook);
+      // asse baricentro
+      if (k !== 'plan') dashed([cp[0], r[1] + 4], [cp[0], r[1] + r[3] - 8], 'ASSI'), T([cp[0] + 1, r[1] + 8], 'asse baricentro', 1.8, 'ASSI');
+      else { dashed([r[0] + 4, cp[1]], [r[0] + r[2] - 4, cp[1]], 'ASSI'); dashed([cp[0], r[1] + 4], [cp[0], r[1] + r[3] - 8], 'ASSI'); }
+      // funi
+      const grp = new Map(); // golfari che in questa vista cadono nello stesso punto: etichetta unica
+      lugs.forEach((l, i) => { const lp = pm([l.L[0], l.L[1], l.L[2] + 0.16]); Ln(lp, hp, 'FUNI', 0.45);
+        const key = Math.round(lp[0] / 10) + ',' + Math.round(lp[1] / 10); if (!grp.has(key)) grp.set(key, {lp, ids: [], al: []}); grp.get(key).ids.push(i + 1); grp.get(key).al.push(l.alpha); });
+      grp.forEach(gq => { const lp = gq.lp, mid = [(lp[0] + hp[0]) / 2, (lp[1] + hp[1]) / 2], left = lp[0] < hp[0] - 0.5;
+        T([mid[0] + (left ? -2 : 2), mid[1] + 1.5], gq.ids.map(x => 'F' + x).join('/'), 2.4, 'FUNI', left ? 'right' : 'left');
+        if (k === 'front') T([lp[0] + (left ? -2 : 2), lp[1] - 6], gq.al.map(a => nf(a, 1) + '°').join(' / '), 2.1, 'QUOTE', left ? 'right' : 'left'); });
+      // golfari
+      lugs.forEach(l => { const lp = pm(l.L); if (k === 'front') { const a = 0.275 * k2, hh = 0.3 * k2; Ln([lp[0] - a, lp[1]], [lp[0] + a, lp[1]], 'GOLFARI', 0.35); Ln([lp[0] - a, lp[1]], [lp[0] - a * 0.4, lp[1] + hh], 'GOLFARI', 0.35); Ln([lp[0] + a, lp[1]], [lp[0] + a * 0.4, lp[1] + hh], 'GOLFARI', 0.35); Ln([lp[0] - a * 0.4, lp[1] + hh], [lp[0] + a * 0.4, lp[1] + hh], 'GOLFARI', 0.35); }
+        else { C(lp, Math.max(0.8, 0.12 * k2), 'GOLFARI'); } });
+      // gancio
+      C(hp, 1.6, 'FUNI'); Ln([hp[0], hp[1] + 1.6], [hp[0], hp[1] + 6], 'FUNI', 0.35);
+      if (k !== 'plan') T([hp[0] + 2.5, hp[1] + 4], `Gancio gru  z ${nf(d.hook[2], 2)}`, 2.2, 'FUNI');
+      cogSym(cp, 2.0); T([cp[0] + 3, cp[1] - 3], `COG = ${nf(d.weight, 1)} t`, 2.3, 'BARICENTRO');
+      // quote
+      const hd = (xa, xb, y, txt) => { Ln([xa, y], [xb, y], 'QUOTE', 0.18); Ln([xa, y - 1.3], [xa, y + 1.3], 'QUOTE', 0.18); Ln([xb, y - 1.3], [xb, y + 1.3], 'QUOTE', 0.18); T([(xa + xb) / 2, y + 1], txt, 2.1, 'QUOTE', 'center'); };
+      const vd = (ya, yb, x, txt) => { Ln([x, ya], [x, yb], 'QUOTE', 0.18); Ln([x - 1.3, ya], [x + 1.3, ya], 'QUOTE', 0.18); Ln([x - 1.3, yb], [x + 1.3, yb], 'QUOTE', 0.18); T([x + 1.5, (ya + yb) / 2], txt, 2.1, 'QUOTE'); };
+      if (k === 'front') {
+        const yq = Math.max(...lugs.map(l => pm(l.L)[1])) + 4;
+        clusters(lugs.map(l => l.L[0])).forEach(c => { const x = pm([c.v, 0, 0])[0]; hd(Math.min(x, cp[0]), Math.max(x, cp[0]), yq, c.txt); });
+        const lz = pm(lugs[0].L); vd(lz[1], hp[1], hp[0] - 10, mm(hook[2] - lugs[0].L[2]));
+      }
+      if (k === 'plan') {
+        const xq = Math.max(...lugs.map(l => pm(l.L)[0])) + 8;
+        clusters(lugs.map(l => l.L[1])).forEach(c => { const y = pm([0, c.v, 0])[1]; vd(Math.min(y, cp[1]), Math.max(y, cp[1]), xq, c.txt); });
+        const yq = Math.min(...lugs.map(l => pm(l.L)[1])) - 8;
+        clusters(lugs.map(l => l.L[0])).forEach(c => { const x = pm([c.v, 0, 0])[0]; hd(Math.min(x, cp[0]), Math.max(x, cp[0]), yq, c.txt); });
+      }
+      if (k === 'side') { const yq = Math.max(...lugs.map(l => pm(l.L)[1])) + 4;
+        clusters(lugs.map(l => l.L[1])).forEach(c => { const x = pm([0, c.v, 0])[0]; hd(Math.min(x, cp[0]), Math.max(x, cp[0]), yq, c.txt); }); }
+    }
+    place('front'); place('plan'); place('side');
+    // tabella golfari e funi
+    const t = R.tab, x0 = t[0] + 2; let y = t[1] + t[3] - 5;
+    T([x0, y], 'GOLFARI E FUNI', 2.8); y -= 6;
+    const cols = [0, 9, 20, 34, 46, 58, 76];
+    ['', 'Trave', 'Carico t', 'Tiro t', 'Angolo', 'Fune m', 'Golfare / grillo'].forEach((h, i) => T([x0 + cols[i], y], h, 1.9)); y -= 2; Ln([x0, y], [t[0] + t[2] - 2, y], 'CORNICE', 0.13); y -= 3.5;
+    lugs.forEach((l, i) => { const row = ['F' + (i + 1), l.g || '', nf(l.P, 1), nf(l.T, 1), nf(l.alpha, 1) + '°', nf(l.Ls, 2)];
+      row.forEach((v, j) => T([x0 + cols[j], y], v, 2.1)); T([x0 + cols[6], y], (l.type || '–'), 1.9); T([x0 + cols[6], y - 3], (l.shackle || ''), 1.7); y -= 7.5; });
+    y -= 2; T([x0, y], `Tiro max ${nf(Math.max(...lugs.map(l => l.T)), 1)} t${d.fd && d.fd !== 1 ? ' (coeff. dinamico ' + nf(d.fd, 2) + ' incluso)' : ''}`, 2.2); y -= 5;
+    T([x0, y], `Gancio sopra il baricentro, quota ${nf(d.hook[2], 2)} m`, 2.0); y -= 4.5;
+    T([x0, y], 'Ripartizione statica dei carichi: valori da verificare.', 1.8);
+    // cartiglio
+    const ty = 8, th = 38; rect(12, ty, 396, th, 'CORNICE', 0.35); Ln([250, ty], [250, ty + th], 'CORNICE', 0.25);
+    T([14, ty + th - 6], `SCHEMA DI SOLLEVAMENTO CON GRU SINGOLA – ${d.name}`, 3.4);
+    T([14, ty + th - 13], `Peso ${nf(d.weight, 2)} t · ${lugs.length} golfari · scala 1:${S} su A3`, 2.5);
+    T([14, ty + th - 19], `COG nel modello  X ${nf(c0[0], 3)}  Y ${nf(c0[1], 3)}  Z ${nf(c0[2], 3)} m`, 2.3);
+    T([14, ty + th - 25], 'Quote in mm dall\'asse del baricentro. Funi dal foro del golfare al gancio.', 2.0);
+    T([252, ty + th - 6], d.project || '', 2.6); T([252, ty + th - 12], d.model || '', 2.0); T([252, ty + th - 18], `Gruppo: ${d.group || ''}`, 2.3);
+    T([252, ty + th - 24], `Data ${new Date().toLocaleDateString('it-IT')}`, 2.2); T([252, ty + 3], 'Peso e baricentro · Golfari · Trimble Connect', 2.0);
+    return {prims: P, scale: S};
+  }
+
+  // ------------------------------------------------------------------ IFC di funi, golfari, gancio e baricentro
+  function lugIfc(d) {
+    const out = []; let n = 0; const add = s => { n++; out.push(`#${n}=${s};`); return `#${n}`; };
+    const G64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
+    const guid = () => { let s = G64[Math.floor(Math.random() * 4)]; for (let i = 0; i < 21; i++) s += G64[Math.floor(Math.random() * 64)]; return s; };
+    const str = s => `'${String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "''").replace(/[^\x20-\x7e]/g, ch => { const c = ch.charCodeAt(0); return c < 256 ? `\\X\\${c.toString(16).toUpperCase().padStart(2, '0')}` : `\\X2\\${c.toString(16).toUpperCase().padStart(4, '0')}\\X0\\`; })}'`;
+    const o = d.origin; // metri, punto di inserimento del sito
+    const mmf = v => (Math.round(v * 10000) / 10).toFixed(1);
+    const pt = (p) => `(${mmf(p[0] - o[0])},${mmf(p[1] - o[1])},${mmf(p[2] - o[2])})`;
+    const p0 = add('IFCCARTESIANPOINT((0.,0.,0.))'), dz = add('IFCDIRECTION((0.,0.,1.))'), dx = add('IFCDIRECTION((1.,0.,0.))'), a0 = add(`IFCAXIS2PLACEMENT3D(${p0},${dz},${dx})`);
+    const ctx = add(`IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,${a0},$)`), body = add(`IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Body','Model',*,*,*,*,${ctx},$,.MODEL_VIEW.,$)`);
+    const units = add(`IFCUNITASSIGNMENT((${add('IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.)')},${add('IFCSIUNIT(*,.PLANEANGLEUNIT.,$,.RADIAN.)')},${add('IFCSIUNIT(*,.MASSUNIT.,.KILO.,.GRAM.)')}))`);
+    const proj = add(`IFCPROJECT('${guid()}',$,${str(d.project || 'Sollevamento')},${str('Schema di sollevamento - ' + d.name)},$,$,$,(${ctx}),${units})`);
+    const sp = add(`IFCCARTESIANPOINT((${(o[0] * 1000).toFixed(1)},${(o[1] * 1000).toFixed(1)},${(o[2] * 1000).toFixed(1)}))`);
+    const spl = add(`IFCLOCALPLACEMENT($,${add(`IFCAXIS2PLACEMENT3D(${sp},${dz},${dx})`)})`);
+    const site = add(`IFCSITE('${guid()}',$,'Sollevamento',$,$,${spl},$,$,.ELEMENT.,$,$,$,$,$)`);
+    add(`IFCRELAGGREGATES('${guid()}',$,$,$,${proj},(${site}))`);
+    const pl = add(`IFCLOCALPLACEMENT(${spl},${a0})`);
+    const styles = {}; const style = hex => { if (styles[hex]) return styles[hex]; const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+      const col = add(`IFCCOLOURRGB($,${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)})`); return styles[hex] = add(`IFCSURFACESTYLE($,.BOTH.,(${add(`IFCSURFACESTYLESHADING(${col},0.)`)}))`); };
+    const shape = (V, F, hex) => { const pl3 = add(`IFCCARTESIANPOINTLIST3D((${V.map(pt).join(',')}))`); const fs = add(`IFCTRIANGULATEDFACESET(${pl3},$,.T.,(${F.map(f => `(${f[0] + 1},${f[1] + 1},${f[2] + 1})`).join(',')}),$)`);
+      add(`IFCSTYLEDITEM(${fs},(${style(hex)}),$)`); return add(`IFCPRODUCTDEFINITIONSHAPE($,$,(${add(`IFCSHAPEREPRESENTATION(${body},'Body','Tessellation',(${fs}))`)}))`); };
+    const pset = (obj, name, props) => { const ps = props.map(([k, v]) => add(`IFCPROPERTYSINGLEVALUE(${str(k)},$,${typeof v === 'number' ? `IFCREAL(${v.toFixed(3)})` : `IFCLABEL(${str(v)})`},$)`)); add(`IFCRELDEFINESBYPROPERTIES('${guid()}',$,$,$,(${obj}),${add(`IFCPROPERTYSET('${guid()}',$,${str(name)},$,(${ps.join(',')}))`)})`); };
+    const proxy = (name, type, V, F, hex, props) => { const e = add(`IFCBUILDINGELEMENTPROXY('${guid()}',$,${str(name)},$,${str(type)},${pl},${shape(V, F, hex)},${str(name)},.NOTDEFINED.)`); if (props) pset(e, 'Sollevamento', props); return e; };
+    // primitive
+    const tube = (a, b, r, seg = 12) => { const ax = norm([b[0] - a[0], b[1] - a[1], b[2] - a[2]]); let t = Math.abs(ax[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]; const u = norm(cross(ax, t)), w = cross(ax, u); const V = [], F = [];
+      for (let i = 0; i < seg; i++) { const an = i / seg * Math.PI * 2, c = Math.cos(an) * r, s = Math.sin(an) * r; V.push([a[0] + u[0] * c + w[0] * s, a[1] + u[1] * c + w[1] * s, a[2] + u[2] * c + w[2] * s]); V.push([b[0] + u[0] * c + w[0] * s, b[1] + u[1] * c + w[1] * s, b[2] + u[2] * c + w[2] * s]); }
+      for (let i = 0; i < seg; i++) { const j = (i + 1) % seg; F.push([2 * i, 2 * j, 2 * i + 1], [2 * j, 2 * j + 1, 2 * i + 1]); }
+      const ca = V.length; V.push(a); const cb = V.length; V.push(b); for (let i = 0; i < seg; i++) { const j = (i + 1) % seg; F.push([ca, 2 * j, 2 * i], [cb, 2 * i + 1, 2 * j + 1]); }
+      return [V, F]; };
+    const prism = (base, h) => { // base: poligono convesso [[x,y,z]...] estruso lungo il vettore h
+      const nb = base.length, V = [...base, ...base.map(p => [p[0] + h[0], p[1] + h[1], p[2] + h[2]])], F = [];
+      for (let i = 1; i < nb - 1; i++) { F.push([0, i + 1, i]); F.push([nb, nb + i, nb + i + 1]); }
+      for (let i = 0; i < nb; i++) { const j = (i + 1) % nb; F.push([i, j, nb + j], [i, nb + j, nb + i]); }
+      return [V, F]; };
+    const box = (c, sx, sy, sz) => prism([[c[0] - sx / 2, c[1] - sy / 2, c[2] - sz / 2], [c[0] + sx / 2, c[1] - sy / 2, c[2] - sz / 2], [c[0] + sx / 2, c[1] + sy / 2, c[2] - sz / 2], [c[0] - sx / 2, c[1] + sy / 2, c[2] - sz / 2]], [0, 0, sz]);
+    const items = [];
+    const ax = [d.ax[0], d.ax[1], 0], pv = [-d.ax[1], d.ax[0], 0];
+    d.lugs.forEach((l, i) => {
+      const L = d.lugL || 0.55, Hh = 0.3, th = 0.035, hole = [l.x, l.y, l.z + 0.16];
+      const P = (u, z) => [l.x + ax[0] * u - pv[0] * th / 2, l.y + ax[1] * u - pv[1] * th / 2, l.z + z];
+      const [V, F] = prism([P(-L / 2, 0), P(L / 2, 0), P(L * 0.2, Hh), P(-L * 0.2, Hh)], [pv[0] * th, pv[1] * th, 0]);
+      items.push(proxy(`Golfare F${i + 1}`, l.type || 'Golfare', V, F, '#e2a900', [['Tiro_t', l.T], ['Carico_t', l.P], ['Tipo', l.type || ''], ['Grillo', l.shackle || ''], ['Trave', l.g || '']]));
+      const [V2, F2] = tube(hole, d.hook, d.slingR || 0.03);
+      items.push(proxy(`Fune F${i + 1}`, 'Fune di sollevamento', V2, F2, '#1f5fbf', [['Tiro_t', l.T], ['Lunghezza_m', l.Ls], ['Angolo_deg', l.alpha], ['Golfare', `F${i + 1}`]]));
+    });
+    const [Vh, Fh] = box([d.hook[0], d.hook[1], d.hook[2] + 0.4], 0.6, 0.4, 0.8);
+    items.push(proxy('Gancio gru', 'Gancio', Vh, Fh, '#c0392b', [['Quota_m', d.hook[2]], ['Peso_sollevato_t', d.weight]]));
+    const s = 0.4, c = d.cog, oct = [[c[0] + s, c[1], c[2]], [c[0] - s, c[1], c[2]], [c[0], c[1] + s, c[2]], [c[0], c[1] - s, c[2]], [c[0], c[1], c[2] + s], [c[0], c[1], c[2] - s]];
+    items.push(proxy('COG ' + d.name, 'Baricentro', oct, [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]], '#d62728', [['Peso_t', d.weight], ['X', c[0]], ['Y', c[1]], ['Z', c[2]]]));
+    add(`IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid()}',$,$,$,(${items.join(',')}),${site})`);
+    return `ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('ViewDefinition [ReferenceView_V1.2]'),'2;1');\nFILE_NAME(${str(d.name + '_sollevamento.ifc')},'${new Date().toISOString().slice(0, 19)}',(''),(''),'Peso e baricentro','Peso e baricentro','');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n` + out.join('\n') + '\nENDSEC;\nEND-ISO-10303-21;\n';
+  }
+
+  const API = {buildLugSheet, lugIfc, liftModel, placeLugs, slingForces, IFC, toDxfMulti, initIfc, openIfc, meshOf, leaves, volCentroid, bboxOf, buildSheet, toPdf, toDxf, featureEdges, hiddenLine};
   if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.PBDraw = API;
 })(typeof window !== 'undefined' ? window : globalThis);
