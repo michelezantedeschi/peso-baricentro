@@ -47,6 +47,11 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
 .cog .d span{text-align:right} .cog .d span:first-child{text-align:left;color:var(--muted)}
 .sw{width:11px;height:11px;border-radius:50%;display:inline-block;background:var(--c);flex:none}
 #state{font-size:12px}
+#sync{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:11.5px;line-height:1.35;padding:5px 7px;border-radius:4px;background:var(--soft);color:var(--muted)}
+#sync.err{background:#fdf3e4;color:var(--warn)}
+#sync .msg{flex:1 1 160px;min-width:0}
+#sync details{flex-basis:100%;font-size:11px;color:var(--muted)}
+#sync pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font:11px var(--m);color:var(--ink)}
 .spin{display:inline-block;width:10px;height:10px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;vertical-align:-1px;margin-right:4px}
 @keyframes s{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.spin{animation:none}}
@@ -438,7 +443,7 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   // ================= condivisione nel progetto Trimble Connect =================
   const SHARED_DIR = 'PesoBaricentro', SHARED_FILE = 'baricentri.json';
   const SH = {host: null, folderId: null, fileId: null, ver: null, last: null, busy: false, again: false, timer: null, tok: null};
-  const syncMsg = t => { $('#sync').innerHTML = t; };
+  const syncMsg = (t, err) => { const el = $('#sync'); el.classList.toggle('err', !!err); el.innerHTML = t; };
   async function tcFetch(path, opts = {}, retry = true) {
     if (!SH.tok) SH.tok = await getToken();
     let proj = {}; try { proj = await api.project.getProject(); } catch (e) {}
@@ -515,22 +520,35 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
     resetSigs();
     return norm(store) !== before;
   }
+  async function diagnose(err) {
+    const L = ['Errore: ' + (err && err.message || err), 'Pagina: ' + location.origin + (window.isSecureContext ? ' (sicura)' : ''), 'Browser: ' + navigator.userAgent.replace(/\(.*?\)/, '').trim().slice(0, 80)];
+    try { localStorage.setItem('pb-test', '1'); L.push('Archivio del browser: ok'); } catch (e) { L.push('Archivio del browser: NON disponibile (' + e.message + ')'); }
+    let proj = {}; try { proj = await api.project.getProject(); L.push('Progetto: ' + (proj.name || '') + ' · regione ' + (proj.location || '?')); } catch (e) { L.push('Progetto: non letto'); }
+    const h = SH.host || HOSTS[String(proj.location || '').toLowerCase().replace(/[^a-z]/g, '')] || HOSTS.europe;
+    L.push('Server: ' + h);
+    try { const r = await fetch(h + '/tc/api/2.0/regions'); L.push('Prova senza accesso: HTTP ' + r.status); } catch (e) { L.push('Prova senza accesso: ERRORE ' + e.message); }
+    L.push('Permesso di accesso: ' + (SH.tok ? 'ottenuto (' + String(SH.tok).length + ' caratteri)' : 'non ottenuto'));
+    if (SH.tok) { try { const r = await fetch(h + '/tc/api/2.0/projects/' + encodeURIComponent(projKey), {headers: {Authorization: 'Bearer ' + SH.tok}}); L.push('Prova con accesso: HTTP ' + r.status); } catch (e) { L.push('Prova con accesso: ERRORE ' + e.message); } }
+    return L.join('\n');
+  }
   function scheduleSync() { clearTimeout(SH.timer); SH.timer = setTimeout(sync, 1200); }
   async function sync() {
     if (SH.busy) { SH.again = true; return; }
     SH.busy = true;
     try {
-      syncMsg('<span class="spin"></span>Sincronizzazione con il progetto…');
+      syncMsg('<span class="msg"><span class="spin"></span>Sincronizzazione con il progetto…</span>');
       await sharedLocate();
       const r = await sharedRemote();
       let changed = false;
       if (r) { if (!r.same) { changed = merge(r.data); SH.ver = r.ver; SH.last = r.data; } }
       if (!r || norm(store) !== norm(r.data)) await sharedUpload();
       if (changed) { saveLocal(); await drawIcons(); render(); renderCur(); }
-      syncMsg(`Condiviso nel progetto (${SHARED_DIR}/${SHARED_FILE}) · aggiornato alle ${new Date().toLocaleTimeString('it-IT', {hour: '2-digit', minute: '2-digit'})}`);
+      syncMsg(`<span class="msg">✓ Condiviso nel progetto · aggiornato alle ${new Date().toLocaleTimeString('it-IT', {hour: '2-digit', minute: '2-digit'})}</span>`);
     } catch (e) {
-      syncMsg(`<span class="warn">Non condiviso: ${esc(e && e.message || e)}. I baricentri restano salvati in questo browser.</span> <button class="sm" id="syncRetry">Riprova</button>`);
+      syncMsg(`<span class="msg">⚠ Baricentri non condivisi con il progetto: restano solo in questo browser.</span><button class="sm" id="syncRetry">Riprova</button>
+        <details><summary>Dettagli per l'assistenza</summary><pre id="diag">Errore: ${esc(e && e.message || e)}\nVerifica in corso…</pre></details>`, true);
       const b = $('#syncRetry'); if (b) b.onclick = () => sync();
+      diagnose(e).then(t => { const d = $('#diag'); if (d) d.textContent = t; });
     } finally {
       SH.busy = false;
       if (SH.again) { SH.again = false; scheduleSync(); }
@@ -546,12 +564,13 @@ label.f{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--mu
   function loadScript(src) { return new Promise((res, rej) => { if (window.WebIFC) return res(); const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error('impossibile caricare la libreria IFC')); document.head.appendChild(sc); }); }
   async function ensureWebIfc() { expMsg('Carico il lettore IFC…', true); await loadScript(WEBIFC_URL + 'web-ifc-api-iife.js'); await PBDraw.initIfc(window.WebIFC, WEBIFC_URL); }
   async function getToken() {
-    const t = await api.extension.requestPermission('accesstoken');
+    let t = await api.extension.requestPermission('accesstoken');
+    if (t && typeof t === 'object') t = t.accessToken || t.token || t.data || '';
     if (t === 'denied') throw new Error('permesso di accesso negato');
-    if (t && t !== 'pending' && t.length > 20) return t;
+    if (typeof t === 'string' && t !== 'pending' && t.length > 20) return t;
     const m = 'Trimble Connect chiede il permesso di accesso per l\'estensione: accettalo per condividere i baricentri nel progetto e scaricare il modello per le tavole.';
-    if ($('#exp').hidden) syncMsg('<span class="spin"></span>' + m); else expMsg(m, true);
-    return await new Promise((res, rej) => { tokenWaiter = v => { tokenWaiter = null; res(v); }; setTimeout(() => rej(new Error('nessuna risposta alla richiesta di accesso')), 120000); });
+    if ($('#exp').hidden) syncMsg('<span class="msg"><span class="spin"></span>' + m + '</span>'); else expMsg(m, true);
+    return await new Promise((res, rej) => { tokenWaiter = v => { tokenWaiter = null; res(v && typeof v === 'object' ? (v.accessToken || v.token || v.data) : v); }; setTimeout(() => rej(new Error('nessuna risposta alla richiesta di accesso')), 120000); });
   }
   const HOSTS = {europe: 'https://app21.connect.trimble.com', northamerica: 'https://app.connect.trimble.com', asia: 'https://app31.connect.trimble.com', australia: 'https://app32.connect.trimble.com'};
   const isIfc = b => new TextDecoder().decode(b.slice(0, 16)).startsWith('ISO-10303-21');

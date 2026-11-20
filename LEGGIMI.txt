@@ -61,6 +61,12 @@ membri del progetto vedono gli stessi baricentri e le stesse origini.
 Le modifiche di più colleghi vengono unite; l'estensione si aggiorna ogni
 45 secondi e a ogni modifica. Non cancellare né spostare quel file.
 
+ALTRI PROGETTI
+L'estensione funziona su qualsiasi progetto: un amministratore del progetto
+la aggiunge una volta in Impostazioni > Estensioni con l'indirizzo
+https://michelezantedeschi.github.io/peso-baricentro/manifest.json
+Ogni progetto ha i suoi gruppi e baricentri (file PesoBaricentro/baricentri.json).
+
 FILE
 index.html   pannello dell'estensione
 draw.js      lettura IFC, viste, PDF e DXF
